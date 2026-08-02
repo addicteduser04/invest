@@ -1,0 +1,10 @@
+project_id = "bvc-portfolio-local"
+[api]
+enabled = true
+schemas = ["public", "storage", "graphql_public"]
+[db]
+major_version = 17
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/**"]

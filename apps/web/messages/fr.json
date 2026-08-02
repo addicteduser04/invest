@@ -1,0 +1,23 @@
+{
+  "brand": "BVC Portfolio",
+  "synthetic": "Démonstration — données synthétiques, non destinées à un usage commercial public",
+  "welcome": "Votre portefeuille, mesuré avec rigueur",
+  "subtitle": "Suivez votre trésorerie, vos positions et votre valorisation dans une interface claire.",
+  "register": "Créer un compte",
+  "login": "Se connecter",
+  "portfolio": "Portefeuille Démo",
+  "total": "Valeur totale",
+  "cash": "Trésorerie",
+  "securities": "Titres",
+  "gain": "Gain latent",
+  "freshness": "Valorisation synthétique au 2 août 2026",
+  "positions": "Positions",
+  "ticker": "Titre",
+  "quantity": "Quantité",
+  "price": "Cours",
+  "value": "Valeur",
+  "admin": "Import CSV administrateur",
+  "upload": "Choisir un fichier CSV",
+  "preview": "Prévisualiser et valider",
+  "approval": "Une approbation explicite par un second administrateur est requise avant publication."
+}
