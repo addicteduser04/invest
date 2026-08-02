@@ -1,0 +1,24 @@
+{
+  "name": "bvc-portfolio",
+  "private": true,
+  "packageManager": "pnpm@11.18.0",
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "format": "prettier --check .",
+    "format:fix": "prettier --write .",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "check:migrations": "node scripts/check-migrations.mjs",
+    "check": "pnpm format && pnpm lint && pnpm typecheck && pnpm test && pnpm test:integration && pnpm check:migrations && pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "prettier": "^3.6.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
