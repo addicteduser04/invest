@@ -9,6 +9,10 @@ const transactionMigration = await readFile(
   new URL('../migrations/202608050002_expand_transaction_command.sql', import.meta.url),
   'utf8',
 );
+const serviceRoleMigration = await readFile(
+  new URL('../migrations/202608050003_service_role_portfolio_reads.sql', import.meta.url),
+  'utf8',
+);
 describe('migration security invariants', () => {
   it('enables RLS on every browser-facing private table', () => {
     for (const table of ['profiles', 'user_roles', 'portfolios', 'transactions'])
@@ -23,4 +27,8 @@ describe('migration security invariants', () => {
     expect(transactionMigration).toContain(
       'revoke insert on public.transactions from authenticated',
     ));
+  it('grants explicit service reads without opening private schemas', () => {
+    expect(serviceRoleMigration).toContain('grant select on public.profiles');
+    expect(serviceRoleMigration).not.toMatch(/grant .*private/i);
+  });
 });

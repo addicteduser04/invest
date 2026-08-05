@@ -47,6 +47,19 @@ async function asUser<T extends QueryResultRow = QueryResultRow>(
   }
 }
 
+async function asDatabaseRole<T extends QueryResultRow>(role: 'service_role', sql: string) {
+  const client = await connect();
+  try {
+    await client.query('begin');
+    await client.query(`set local role ${role}`);
+    const result = await client.query<T>(sql);
+    await client.query('commit');
+    return result;
+  } finally {
+    await client.end();
+  }
+}
+
 async function record(
   userId: string,
   portfolioId: string,
@@ -122,9 +135,8 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
     ]);
     expect((await asUser(ids.admin, 'select id from public.portfolios')).rowCount).toBe(0);
     expect(
-      (await adminClient.query('select id from public.portfolios where id=$1', [ids.portfolioA]))
-        .rowCount,
-    ).toBe(1);
+      (await asDatabaseRole('service_role', 'select id from public.portfolios')).rowCount,
+    ).toBe(2);
     await expect(
       asUser(ids.userB, "update public.portfolios set name='forged' where id=$1 returning id", [
         ids.portfolioA,
