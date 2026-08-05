@@ -50,7 +50,7 @@ async function asUser<T extends QueryResultRow = QueryResultRow>(
 async function record(
   userId: string,
   portfolioId: string,
-  type: 'deposit' | 'buy',
+  type: 'deposit' | 'withdrawal' | 'buy' | 'sell' | 'dividend' | 'fee' | 'tax',
   key: string,
   amount: string | null,
   securityId: string | null = null,
@@ -171,5 +171,33 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
       [ids.portfolioA],
     );
     expect(cash.rows[0]!.cash).toBe('20.000000');
+  });
+
+  it('routes every financial mutation through the command and enforces holdings', async () => {
+    await expect(
+      asUser(
+        ids.userA,
+        `insert into public.transactions(portfolio_id,transaction_type,trade_date,settlement_date,net_amount,idempotency_key,created_by)
+         values($1,'deposit',current_date,current_date,1,$2,$3)`,
+        [ids.portfolioA, randomUUID(), ids.userA],
+      ),
+    ).rejects.toThrow(/permission denied/);
+    await record(ids.userA, ids.portfolioA, 'deposit', randomUUID(), '1000');
+    await record(ids.userA, ids.portfolioA, 'buy', randomUUID(), null, securityId, '10', '50');
+    await record(ids.userA, ids.portfolioA, 'sell', randomUUID(), null, securityId, '4', '60');
+    await record(ids.userA, ids.portfolioA, 'dividend', randomUUID(), '20');
+    await record(ids.userA, ids.portfolioA, 'fee', randomUUID(), '5');
+    await record(ids.userA, ids.portfolioA, 'tax', randomUUID(), '2');
+    await record(ids.userA, ids.portfolioA, 'withdrawal', randomUUID(), '10');
+    await expect(
+      record(ids.userA, ids.portfolioA, 'sell', randomUUID(), null, securityId, '8', '60'),
+    ).rejects.toThrow(/insufficient quantity/);
+    const result = await adminClient.query<{ cash: string; quantity: string }>(
+      `select (select sum(amount)::text from private.cash_ledger_entries where portfolio_id=$1) cash,
+              (select sum(case transaction_type when 'buy' then quantity when 'sell' then -quantity else 0 end)::text
+                 from public.transactions where portfolio_id=$1 and security_id=$2) quantity`,
+      [ids.portfolioA, securityId],
+    );
+    expect(result.rows[0]).toEqual({ cash: '763.000000', quantity: '7.00000000' });
   });
 });
