@@ -26,32 +26,60 @@ export interface LedgerResult {
   cash: DecimalString;
   positions: Position[];
 }
+export interface DatedPrice {
+  value: DecimalString;
+  marketDate: string;
+}
+export interface ValuationResult {
+  cashValue: DecimalString;
+  securitiesValue: DecimalString;
+  totalValue: DecimalString;
+  unrealizedGain: DecimalString;
+  status: 'current' | 'stale' | 'missing';
+  missingSecurityIds: string[];
+  staleSecurityIds: string[];
+}
 
 const d = (value: DecimalString | undefined) => new Decimal(value ?? '0');
 const out = (value: Decimal) => value.toFixed();
 
-export function calculateLedger(transactions: readonly Transaction[]): LedgerResult {
+export function calculateLedger(
+  transactions: readonly Transaction[],
+  options: { asOfDate?: string } = {},
+): LedgerResult {
   let cash = new Decimal(0);
   const positions = new Map<
     string,
     { quantity: Decimal; costBasis: Decimal; realizedGain: Decimal }
   >();
-  for (const tx of [...transactions].sort(
-    (a, b) => a.settlementDate.localeCompare(b.settlementDate) || a.id.localeCompare(b.id),
-  )) {
+  const ordered = [...transactions]
+    .filter((transaction) => !options.asOfDate || transaction.settlementDate <= options.asOfDate)
+    .sort((a, b) => a.settlementDate.localeCompare(b.settlementDate) || a.id.localeCompare(b.id));
+  for (const tx of ordered) {
     const fees = d(tx.fees);
     const taxes = d(tx.taxes);
-    if (tx.type === 'deposit') cash = cash.plus(d(tx.amount));
-    if (tx.type === 'withdrawal' || tx.type === 'fee' || tx.type === 'tax')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(tx.settlementDate))
+      throw new Error(`Invalid settlement date for transaction ${tx.id}`);
+    if (fees.lt(0) || taxes.lt(0)) throw new Error('Financial values must be non-negative');
+    if (tx.type === 'deposit') {
+      if (!tx.amount || d(tx.amount).lte(0)) throw new Error('Deposit must be positive');
+      cash = cash.plus(d(tx.amount));
+    }
+    if (tx.type === 'withdrawal' || tx.type === 'fee' || tx.type === 'tax') {
+      if (!tx.amount || d(tx.amount).lte(0)) throw new Error('Amount must be positive');
       cash = cash.minus(d(tx.amount));
-    if (tx.type === 'dividend') cash = cash.plus(d(tx.amount).minus(taxes));
+    }
+    if (tx.type === 'dividend') {
+      if (!tx.amount || d(tx.amount).lte(0) || taxes.gt(d(tx.amount)))
+        throw new Error('Dividend and withholding tax are invalid');
+      cash = cash.plus(d(tx.amount).minus(taxes));
+    }
     if (tx.type === 'buy' || tx.type === 'sell') {
       if (!tx.securityId || !tx.quantity || !tx.unitPrice)
         throw new Error('Security, quantity and unit price are required');
       const quantity = d(tx.quantity);
       const gross = quantity.times(d(tx.unitPrice));
-      if (quantity.lte(0) || gross.lt(0) || fees.lt(0) || taxes.lt(0))
-        throw new Error('Financial values must be non-negative');
+      if (quantity.lte(0) || gross.lt(0)) throw new Error('Financial values must be non-negative');
       const current = positions.get(tx.securityId) ?? {
         quantity: new Decimal(0),
         costBasis: new Decimal(0),
@@ -104,5 +132,53 @@ export function valuePortfolio(
     securitiesValue: out(securitiesValue),
     totalValue: out(securitiesValue.plus(d(ledger.cash))),
     unrealizedGain: out(securitiesValue.minus(costBasis)),
+  };
+}
+
+export function valuePortfolioAsOf(
+  ledger: LedgerResult,
+  prices: Readonly<Record<string, DatedPrice | undefined>>,
+  valuationDate: string,
+  staleAfterDays = 5,
+): ValuationResult {
+  let securitiesValue = new Decimal(0);
+  let costBasis = new Decimal(0);
+  const missingSecurityIds: string[] = [];
+  const staleSecurityIds: string[] = [];
+  const valuationTime = Date.parse(`${valuationDate}T00:00:00Z`);
+  if (!Number.isFinite(valuationTime)) throw new Error('Invalid valuation date');
+
+  for (const position of ledger.positions) {
+    if (d(position.quantity).isZero()) continue;
+    costBasis = costBasis.plus(d(position.costBasis));
+    const price = prices[position.securityId];
+    if (!price || price.marketDate > valuationDate) {
+      missingSecurityIds.push(position.securityId);
+      continue;
+    }
+    const age = Math.floor(
+      (valuationTime - Date.parse(`${price.marketDate}T00:00:00Z`)) / 86_400_000,
+    );
+    if (!Number.isFinite(age) || age < 0) {
+      missingSecurityIds.push(position.securityId);
+      continue;
+    }
+    if (age > staleAfterDays) staleSecurityIds.push(position.securityId);
+    securitiesValue = securitiesValue.plus(d(position.quantity).times(d(price.value)));
+  }
+
+  const status = missingSecurityIds.length
+    ? 'missing'
+    : staleSecurityIds.length
+      ? 'stale'
+      : 'current';
+  return {
+    cashValue: ledger.cash,
+    securitiesValue: out(securitiesValue),
+    totalValue: out(securitiesValue.plus(d(ledger.cash))),
+    unrealizedGain: out(securitiesValue.minus(costBasis)),
+    status,
+    missingSecurityIds,
+    staleSecurityIds,
   };
 }
