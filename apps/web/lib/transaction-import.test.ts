@@ -50,4 +50,21 @@ describe('transaction CSV preview', () => {
       expect.arrayContaining(['INVALID_DECIMAL', 'UNKNOWN_SECURITY']),
     );
   });
+  it.each([
+    ['', 'INVALID_FILE'],
+    ['date,type,reference', 'INVALID_FILE'],
+    ['when,type,reference\n2026-02-31,deposit,ref-000000000001', 'INVALID_MAPPING'],
+  ])('rejects invalid file or mapping input', (content, code) => {
+    expect(() => previewTransactionCsv(content, mapping, securities)).toThrow(code);
+  });
+  it('rejects impossible calendar dates and zero financial quantities', () => {
+    const result = previewTransactionCsv(
+      'date,type,security,quantity,value,fees,taxes,currency,reference,description\n2026-02-31,buy,IAM,0,2,0,0,MAD,ref-000000000001,',
+      mapping,
+      securities,
+    );
+    expect(result.rows[0]!.errors.map((error) => error.code)).toEqual(
+      expect.arrayContaining(['INVALID_DATE', 'INVALID_DECIMAL']),
+    );
+  });
 });

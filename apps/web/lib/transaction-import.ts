@@ -84,13 +84,23 @@ function csv(text: string): string[][] {
 }
 
 const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+const validDate = (value: string) => {
+  if (!isoDate.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year!, month! - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month! - 1 && date.getUTCDate() === day
+  );
+};
+const positiveDecimal = (value: string) =>
+  decimalSchema.safeParse(value).success && /[1-9]/.test(value);
 export function previewTransactionCsv(
   content: string,
   mapping: ImportMapping,
   securities: Map<string, string>,
 ): ImportPreview {
   if (Buffer.byteLength(content, 'utf8') > MAX_IMPORT_BYTES) throw new Error('FILE_TOO_LARGE');
-  if (content.includes('\0') || content.startsWith('\uFFFD')) throw new Error('INVALID_FILE');
+  if (content.includes('\0') || content.includes('\uFFFD')) throw new Error('INVALID_FILE');
   const parsed = csv(content.replace(/^\uFEFF/, ''));
   if (parsed.length < 2) throw new Error('INVALID_FILE');
   if (parsed.length - 1 > MAX_IMPORT_ROWS) throw new Error('TOO_MANY_ROWS');
@@ -109,7 +119,7 @@ export function previewTransactionCsv(
     const rawType = get('type').toLowerCase();
     if (!transactionTypes.includes(rawType as TransactionType))
       errors.push({ code: 'INVALID_TRANSACTION_TYPE', field: 'type', row: index + 2 });
-    if (!isoDate.test(get('date')) || Number.isNaN(Date.parse(`${get('date')}T00:00:00Z`)))
+    if (!validDate(get('date')))
       errors.push({ code: 'INVALID_DATE', field: 'date', row: index + 2 });
     const decimalFields = ['quantity', 'unitPrice', 'fees', 'taxes'] as const;
     for (const field of decimalFields)
@@ -124,6 +134,8 @@ export function previewTransactionCsv(
       errors.push({ code: 'UNKNOWN_SECURITY', field: 'security', row: index + 2 });
     if ((type === 'buy' || type === 'sell') && (!get('quantity') || !get('unitPrice')))
       errors.push({ code: 'IMPORT_VALIDATION_FAILED', field: 'quantity', row: index + 2 });
+    if ((type === 'buy' || type === 'sell') && get('quantity') && !positiveDecimal(get('quantity')))
+      errors.push({ code: 'INVALID_DECIMAL', field: 'quantity', row: index + 2 });
     if (!['buy', 'sell'].includes(type) && (get('quantity') || security))
       errors.push({ code: 'IMPORT_VALIDATION_FAILED', field: 'security', row: index + 2 });
     if (get('currency') && get('currency') !== 'MAD')
@@ -131,7 +143,7 @@ export function previewTransactionCsv(
     const amount = !['buy', 'sell'].includes(type)
       ? get('unitPrice') || get('quantity')
       : undefined;
-    if (!['buy', 'sell'].includes(type) && (!amount || !decimalSchema.safeParse(amount).success))
+    if (!['buy', 'sell'].includes(type) && (!amount || !positiveDecimal(amount)))
       errors.push({ code: 'INVALID_DECIMAL', field: 'amount', row: index + 2 });
     const fingerprint = JSON.stringify(values);
     const reference = get('externalReference');

@@ -131,6 +131,53 @@ a {
   border-radius: 7px;
   background: white;
 }
+.status-message:empty {
+  display: none;
+}
+.status-message {
+  margin: 12px 0;
+  padding: 10px;
+  background: #eef4f0;
+}
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+.summary-grid div {
+  background: #f4f0e5;
+  padding: 10px;
+  border-radius: 7px;
+}
+.summary-grid dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.summary-grid dd {
+  margin: 5px 0 0;
+  font-weight: 700;
+}
+.technical {
+  unicode-bidi: isolate;
+  font-variant-numeric: tabular-nums;
+}
+.table-scroll {
+  overflow-x: auto;
+}
+.error-text {
+  color: #9b2525;
+}
+.warning-text {
+  color: #795713;
+}
+.success-text {
+  color: var(--green-2);
+  font-weight: 700;
+}
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 footer {
   color: var(--muted);
   font-size: 0.82rem;

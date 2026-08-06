@@ -1,5 +1,6 @@
 import { localizeError, type ErrorCode } from '@bvc/contracts';
 import { createClient } from '@/lib/supabase/server';
+
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = await request.json();
@@ -13,13 +14,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       { code: 'UNAUTHENTICATED', message: localizeError({ code: 'UNAUTHENTICATED' }, locale) },
       { status: 401 },
     );
-  const { data, error } = await supabase.rpc('confirm_transaction_import', { p_import_id: id });
+  const { error } = await supabase.rpc('supersede_transaction_import', { p_import_id: id });
   if (error) {
     const allowed: ErrorCode[] = [
       'FORBIDDEN_PORTFOLIO',
+      'CONFIRMED_IMPORT_IMMUTABLE',
       'IMPORT_NOT_CONFIRMABLE',
-      'INSUFFICIENT_CASH',
-      'INSUFFICIENT_HOLDINGS',
     ];
     const code = allowed.includes(error.message as ErrorCode)
       ? (error.message as ErrorCode)
@@ -29,12 +29,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       { status: code === 'FORBIDDEN_PORTFOLIO' ? 403 : 409 },
     );
   }
-  if (data?.status === 'failed') {
-    const code = data.failureCode as ErrorCode;
-    return Response.json(
-      { importId: id, ...data, message: localizeError({ code, row: data.failedRow }, locale) },
-      { status: 409 },
-    );
-  }
-  return Response.json({ importId: id, ...data });
+  return Response.json({ importId: id, status: 'superseded' });
 }

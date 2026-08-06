@@ -4,6 +4,7 @@ import {
   IMPORT_MAPPING_VERSION,
   MAX_IMPORT_BYTES,
   previewTransactionCsv,
+  transactionTypes,
   type ImportMapping,
 } from '@/lib/transaction-import';
 
@@ -32,6 +33,13 @@ export async function POST(request: Request) {
       { status: 401 },
     );
   const file = form.get('file');
+  const acceptedTypes = new Set([
+    'text/csv',
+    'application/csv',
+    'text/plain',
+    'application/vnd.ms-excel',
+    '',
+  ]);
   if (!(file instanceof File) || file.size < 1 || file.size > MAX_IMPORT_BYTES)
     return Response.json(
       {
@@ -46,6 +54,11 @@ export async function POST(request: Request) {
           locale,
         ),
       },
+      { status: 400 },
+    );
+  if (!acceptedTypes.has(file.type))
+    return Response.json(
+      { code: 'INVALID_FILE', message: localizeError({ code: 'INVALID_FILE' }, locale) },
       { status: 400 },
     );
   const mapping = Object.fromEntries(
@@ -89,7 +102,7 @@ export async function POST(request: Request) {
     preview.totals.valid = preview.rows.filter((row) => !row.errors.length).length;
     preview.totals.invalid = preview.rows.length - preview.totals.valid;
     preview.canConfirm = preview.totals.invalid === 0;
-    const { data: importId, error } = await supabase.rpc('create_transaction_import', {
+    const args = {
       p_portfolio_id: String(form.get('portfolioId')),
       p_filename: file.name,
       p_file_hash: preview.hash,
@@ -100,11 +113,31 @@ export async function POST(request: Request) {
       p_mapping_version: IMPORT_MAPPING_VERSION,
       p_preview_totals: preview.totals,
       p_rows: preview.rows.flatMap((row) => (row.transaction ? [row.transaction] : [])),
-    });
+    };
+    const supersedesImportId = String(form.get('supersedesImportId') ?? '');
+    const { data: importId, error } = supersedesImportId
+      ? await supabase.rpc('replace_transaction_import', {
+          p_supersedes_import_id: supersedesImportId,
+          ...args,
+        })
+      : await supabase.rpc('create_transaction_import', args);
     if (error) {
       const code = safeCode(error.message);
+      const duplicate =
+        code === 'DUPLICATE_IMPORT'
+          ? await supabase
+              .from('transaction_imports')
+              .select('id,status')
+              .eq('portfolio_id', String(form.get('portfolioId')))
+              .eq('file_hash', preview.hash)
+              .maybeSingle()
+          : null;
       return Response.json(
-        { code, message: localizeError({ code }, locale) },
+        {
+          code,
+          message: localizeError({ code }, locale),
+          existingImport: duplicate?.data ?? undefined,
+        },
         { status: code === 'DUPLICATE_IMPORT' ? 409 : 400 },
       );
     }
@@ -112,6 +145,38 @@ export async function POST(request: Request) {
       {
         importId,
         ...preview,
+        filename: file.name,
+        portfolioId: String(form.get('portfolioId')),
+        typeSummary: Object.fromEntries(
+          transactionTypes.map((type) => [
+            type,
+            preview.rows.filter((row) => row.transaction?.type === type).length,
+          ]),
+        ),
+        expectedEffects: preview.rows.flatMap((row) =>
+          row.transaction
+            ? [
+                {
+                  row: row.row,
+                  type: row.transaction.type,
+                  cash:
+                    row.transaction.type === 'deposit' || row.transaction.type === 'dividend'
+                      ? `+${row.transaction.amount}`
+                      : row.transaction.type === 'buy'
+                        ? `-(${row.transaction.quantity} × ${row.transaction.unitPrice} + ${row.transaction.fees} + ${row.transaction.taxes})`
+                        : row.transaction.type === 'sell'
+                          ? `+(${row.transaction.quantity} × ${row.transaction.unitPrice} - ${row.transaction.fees} - ${row.transaction.taxes})`
+                          : `-${row.transaction.amount}`,
+                  holding: row.transaction.securityId
+                    ? `${row.transaction.type === 'buy' ? '+' : '-'}${row.transaction.quantity} ${row.transaction.securityId}`
+                    : null,
+                },
+              ]
+            : [],
+        ),
+        existingTransactions: preview.rows.filter((row) =>
+          row.errors.some((error) => error.code === 'EXISTING_TRANSACTION'),
+        ).length,
         rows: preview.rows.map((row) => ({
           ...row,
           errors: row.errors.map((error) => ({ ...error, message: localizeError(error, locale) })),
