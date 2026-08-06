@@ -76,6 +76,11 @@ export default async function Dashboard({ params }: { params: Promise<{ locale: 
               </label>
               <button className="button">{ar ? 'تسجيل' : 'Enregistrer'}</button>
             </form>
+            <p>
+              <a href={`/${locale}/transactions/import`}>
+                {ar ? 'استيراد عمليات من CSV' : 'Importer des opérations CSV'}
+              </a>
+            </p>
           </section>
         </>
       )}
