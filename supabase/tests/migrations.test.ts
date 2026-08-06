@@ -17,6 +17,10 @@ const importMigration = await readFile(
   new URL('../migrations/202608060001_transaction_csv_imports.sql', import.meta.url),
   'utf8',
 );
+const supersessionMigration = await readFile(
+  new URL('../migrations/202608060003_atomic_import_supersession.sql', import.meta.url),
+  'utf8',
+);
 describe('migration security invariants', () => {
   it('enables RLS on every browser-facing private table', () => {
     for (const table of ['profiles', 'user_roles', 'portfolios', 'transactions'])
@@ -43,5 +47,11 @@ describe('migration security invariants', () => {
     expect(importMigration).not.toMatch(
       /grant (insert|update|delete).*transaction_imports.*authenticated/i,
     );
+  });
+  it('links replacement imports atomically with ownership checks', () => {
+    expect(supersessionMigration).toContain('for update');
+    expect(supersessionMigration).toContain('v_old.owner_id<>v_user');
+    expect(supersessionMigration).toContain('supersedes_import_id=p_supersedes_import_id');
+    expect(supersessionMigration).toContain("set search_path='' ");
   });
 });
