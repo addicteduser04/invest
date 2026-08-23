@@ -358,6 +358,318 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
     ).toBe(0);
   });
 
+  it.each([
+    [
+      'first',
+      2,
+      [
+        {
+          row: 2,
+          date: '2026-08-03',
+          type: 'withdrawal',
+          amount: '99999',
+          fees: '0',
+          taxes: '0',
+          externalReference: randomUUID(),
+        },
+        {
+          row: 3,
+          date: '2026-08-03',
+          type: 'deposit',
+          amount: '1',
+          fees: '0',
+          taxes: '0',
+          externalReference: randomUUID(),
+        },
+      ],
+    ],
+    [
+      'final',
+      4,
+      [
+        {
+          row: 2,
+          date: '2026-08-03',
+          type: 'deposit',
+          amount: '1',
+          fees: '0',
+          taxes: '0',
+          externalReference: randomUUID(),
+        },
+        {
+          row: 3,
+          date: '2026-08-03',
+          type: 'deposit',
+          amount: '1',
+          fees: '0',
+          taxes: '0',
+          externalReference: randomUUID(),
+        },
+        {
+          row: 4,
+          date: '2026-08-03',
+          type: 'withdrawal',
+          amount: '99999',
+          fees: '0',
+          taxes: '0',
+          externalReference: randomUUID(),
+        },
+      ],
+    ],
+  ] as const)(
+    'rolls back a %s-row failure while retaining only its audit',
+    async (_position, failedRow, rows) => {
+      const before = await adminClient.query<{
+        transactions: string;
+        outbox: string;
+        cash: string;
+      }>(
+        `select (select count(*) from public.transactions where portfolio_id=$1)::text transactions,(select count(*) from private.outbox where aggregate_id=$1)::text outbox,(select coalesce(sum(amount),0)::text from private.cash_ledger_entries where portfolio_id=$1) cash`,
+        [ids.importPortfolio],
+      );
+      const importId = (await createImport([...rows])).rows[0]!.id;
+      const result = await asUser<{
+        result: { status: string; failureCode: string; failedRow: number };
+      }>(ids.userA, 'select public.confirm_transaction_import($1) result', [importId]);
+      expect(result.rows[0]!.result).toMatchObject({
+        status: 'failed',
+        failureCode: 'INSUFFICIENT_CASH',
+        failedRow,
+      });
+      const after = await adminClient.query<{ transactions: string; outbox: string; cash: string }>(
+        `select (select count(*) from public.transactions where portfolio_id=$1)::text transactions,(select count(*) from private.outbox where aggregate_id=$1)::text outbox,(select coalesce(sum(amount),0)::text from private.cash_ledger_entries where portfolio_id=$1) cash`,
+        [ids.importPortfolio],
+      );
+      expect(after.rows[0]).toEqual(before.rows[0]);
+      expect(
+        (
+          await adminClient.query(
+            'select status,imported_row_count,cardinality(transaction_ids) ids from public.transaction_imports where id=$1',
+            [importId],
+          )
+        ).rows[0],
+      ).toEqual({ status: 'failed', imported_row_count: null, ids: 0 });
+      expect(
+        (
+          await asUser(
+            ids.userA,
+            'select failed_row,failure_code from public.transaction_import_attempts where import_id=$1',
+            [importId],
+          )
+        ).rows,
+      ).toEqual([{ failed_row: failedRow, failure_code: 'INSUFFICIENT_CASH' }]);
+      expect(
+        (
+          await asUser(
+            ids.userB,
+            'select id from public.transaction_import_attempts where import_id=$1',
+            [importId],
+          )
+        ).rowCount,
+      ).toBe(0);
+    },
+  );
+
+  it('prevents mapping mutation and binds confirmation to one immutable preview', async () => {
+    const importId = (
+      await createImport([
+        {
+          row: 2,
+          date: '2026-08-06',
+          type: 'deposit',
+          amount: '3',
+          fees: '0',
+          taxes: '0',
+          externalReference: randomUUID(),
+        },
+      ])
+    ).rows[0]!.id;
+    await expect(
+      asUser(
+        ids.userA,
+        'update public.transaction_imports set mapping=\'{"type":"forged"}\' where id=$1 returning id',
+        [importId],
+      ),
+    ).rejects.toThrow(/permission denied/);
+    await asUser(ids.userA, 'select public.confirm_transaction_import($1)', [importId]);
+    expect(
+      (
+        await adminClient.query(
+          'select mapping,status from public.transaction_imports where id=$1',
+          [importId],
+        )
+      ).rows[0],
+    ).toEqual({ mapping: {}, status: 'confirmed' });
+  });
+
+  it('serializes preview replacement racing with confirmation', async () => {
+    const content = `race-${randomUUID()}`;
+    const rows = [
+      {
+        row: 2,
+        date: '2026-08-07',
+        type: 'deposit',
+        amount: '4',
+        fees: '0',
+        taxes: '0',
+        externalReference: randomUUID(),
+      },
+    ];
+    const oldId = (await createImport(rows, content)).rows[0]!.id;
+    const replacementContent = `replacement-${randomUUID()}`;
+    const hash = createHash('sha256').update(replacementContent).digest('hex');
+    const results = await Promise.allSettled([
+      asUser(ids.userA, 'select public.confirm_transaction_import($1)', [oldId]),
+      asUser(
+        ids.userA,
+        `select public.replace_transaction_import($1,$2,'replacement.csv',$3,$4,'text/csv',$5,'{}',1,$6,$7)`,
+        [
+          oldId,
+          ids.importPortfolio,
+          hash,
+          Buffer.byteLength(replacementContent),
+          replacementContent,
+          JSON.stringify({ valid: 1, invalid: 0, total: 1 }),
+          JSON.stringify(rows),
+        ],
+      ),
+    ]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const state = await adminClient.query<{ status: string }>(
+      'select status from public.transaction_imports where id=$1',
+      [oldId],
+    );
+    expect(['confirmed', 'superseded']).toContain(state.rows[0]!.status);
+    expect(
+      (
+        await adminClient.query(
+          'select count(*)::integer count from public.transactions where portfolio_id=$1 and idempotency_key=$2',
+          [ids.importPortfolio, rows[0]!.externalReference],
+        )
+      ).rows[0]!.count,
+    ).toBeLessThanOrEqual(1);
+  });
+
+  it('allows only one of two concurrent supersession links', async () => {
+    const oldId = (
+      await createImport([
+        {
+          row: 2,
+          date: '2026-08-08',
+          type: 'deposit',
+          amount: '1',
+          fees: '0',
+          taxes: '0',
+          externalReference: randomUUID(),
+        },
+      ])
+    ).rows[0]!.id;
+    const replace = (suffix: string) => {
+      const content = `replace-${suffix}-${randomUUID()}`;
+      const hash = createHash('sha256').update(content).digest('hex');
+      const rows = [
+        {
+          row: 2,
+          date: '2026-08-08',
+          type: 'deposit',
+          amount: '1',
+          fees: '0',
+          taxes: '0',
+          externalReference: randomUUID(),
+        },
+      ];
+      return asUser(
+        ids.userA,
+        `select public.replace_transaction_import($1,$2,$3,$4,$5,'text/csv',$6,'{}',1,$7,$8)`,
+        [
+          oldId,
+          ids.importPortfolio,
+          `${suffix}.csv`,
+          hash,
+          Buffer.byteLength(content),
+          content,
+          JSON.stringify({ valid: 1, invalid: 0, total: 1 }),
+          JSON.stringify(rows),
+        ],
+      );
+    };
+    const results = await Promise.allSettled([replace('a'), replace('b')]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(
+      (
+        await adminClient.query(
+          'select count(*)::integer count from public.transaction_imports where supersedes_import_id=$1',
+          [oldId],
+        )
+      ).rows[0]!.count,
+    ).toBe(1);
+  });
+
+  it('serializes confirmation against cash-changing commands without negative cash', async () => {
+    const importId = (
+      await createImport([
+        {
+          row: 2,
+          date: '2026-08-09',
+          type: 'withdrawal',
+          amount: '900',
+          fees: '0',
+          taxes: '0',
+          externalReference: randomUUID(),
+        },
+      ])
+    ).rows[0]!.id;
+    await Promise.allSettled([
+      asUser(ids.userA, 'select public.confirm_transaction_import($1)', [importId]),
+      record(ids.userA, ids.importPortfolio, 'withdrawal', randomUUID(), '900'),
+    ]);
+    const cash = await adminClient.query<{ cash: string }>(
+      'select coalesce(sum(amount),0)::text cash from private.cash_ledger_entries where portfolio_id=$1',
+      [ids.importPortfolio],
+    );
+    expect(Number(cash.rows[0]!.cash)).toBeGreaterThanOrEqual(0);
+    const status = await adminClient.query<{ status: string }>(
+      'select status from public.transaction_imports where id=$1',
+      [importId],
+    );
+    expect(['confirmed', 'failed']).toContain(status.rows[0]!.status);
+  });
+
+  it('serializes confirmation against holdings-changing commands without negative holdings', async () => {
+    await record(ids.userA, ids.importPortfolio, 'buy', randomUUID(), null, securityId, '2', '1');
+    const importId = (
+      await createImport([
+        {
+          row: 2,
+          date: '2026-08-10',
+          type: 'sell',
+          securityId,
+          quantity: '2',
+          unitPrice: '1',
+          fees: '0',
+          taxes: '0',
+          externalReference: randomUUID(),
+        },
+      ])
+    ).rows[0]!.id;
+    await Promise.allSettled([
+      asUser(ids.userA, 'select public.confirm_transaction_import($1)', [importId]),
+      record(ids.userA, ids.importPortfolio, 'sell', randomUUID(), null, securityId, '2', '1'),
+    ]);
+    const holding = await adminClient.query<{ quantity: string }>(
+      "select coalesce(sum(case transaction_type when 'buy' then quantity when 'sell' then -quantity else 0 end),0)::text quantity from public.transactions where portfolio_id=$1 and security_id=$2",
+      [ids.importPortfolio, securityId],
+    );
+    expect(Number(holding.rows[0]!.quantity)).toBeGreaterThanOrEqual(0);
+    const successful = await adminClient.query<{ transactions: string; outbox: string }>(
+      `select count(*)::text transactions,(select count(*)::text from private.outbox where aggregate_id=$1 and payload->>'transactionId'=any(array_agg(t.id::text))) outbox from public.transactions t where portfolio_id=$1`,
+      [ids.importPortfolio],
+    );
+    expect(Number(successful.rows[0]!.outbox)).toBeLessThanOrEqual(
+      Number(successful.rows[0]!.transactions),
+    );
+  });
+
   it('serializes repeated and concurrent confirmation without duplicating effects', async () => {
     const reference = randomUUID();
     const importId = (
