@@ -170,4 +170,54 @@ describe('Sprint 2 accounting rules', () => {
     expect(ledger.cash).toBe('0.7');
     expect(ledger.positions[0]!.averageCost).toBe('0.1');
   });
+
+  it('treats a linked reversal as removal of the immutable original for all as-of calculations', () => {
+    const reversal = {
+      id: '09',
+      type: 'reversal' as const,
+      settlementDate: '2026-01-03',
+      reversesTransactionId: '03',
+    };
+    expect(calculateLedger([...history, reversal])).toEqual(
+      calculateLedger(history.filter((transaction) => transaction.id !== '03')),
+    );
+    expect(calculateLedger([...history, reversal], { asOfDate: '2026-01-03' })).toEqual(
+      calculateLedger(
+        history.filter((transaction) => transaction.id !== '03'),
+        {
+          asOfDate: '2026-01-03',
+        },
+      ),
+    );
+  });
+
+  it('rejects orphan and duplicate reversals', () => {
+    expect(() =>
+      calculateLedger([
+        {
+          id: 'orphan',
+          type: 'reversal',
+          settlementDate: '2026-01-01',
+          reversesTransactionId: 'missing',
+        },
+      ]),
+    ).toThrow('Missing reversed transaction');
+    expect(() =>
+      calculateLedger([
+        ...history,
+        {
+          id: '09',
+          type: 'reversal',
+          settlementDate: '2026-01-03',
+          reversesTransactionId: '03',
+        },
+        {
+          id: '10',
+          type: 'reversal',
+          settlementDate: '2026-01-03',
+          reversesTransactionId: '03',
+        },
+      ]),
+    ).toThrow('reversed more than once');
+  });
 });

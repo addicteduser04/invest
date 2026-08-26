@@ -125,11 +125,40 @@ a {
   max-width: 560px;
 }
 .form input,
-.form select {
+.form select,
+.form textarea {
   padding: 12px;
   border: 1px solid #bdb6a7;
   border-radius: 7px;
   background: white;
+}
+.form textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.check-row input {
+  inline-size: 18px;
+  block-size: 18px;
+}
+.replacement-fields {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #ded8ca;
+  border-radius: 8px;
+  padding: 14px;
+}
+.replacement-fields label {
+  display: grid;
+  gap: 6px;
+}
+.correction-flow > .button.secondary {
+  display: inline-block;
+  margin-top: 18px;
 }
 .status-message:empty {
   display: none;

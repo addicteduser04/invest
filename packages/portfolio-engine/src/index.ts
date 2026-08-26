@@ -3,7 +3,7 @@ import Decimal from 'decimal.js';
 Decimal.set({ precision: 40, rounding: Decimal.ROUND_HALF_EVEN });
 export type DecimalString = string;
 export type TransactionType =
-  'deposit' | 'withdrawal' | 'buy' | 'sell' | 'dividend' | 'fee' | 'tax';
+  'deposit' | 'withdrawal' | 'buy' | 'sell' | 'dividend' | 'fee' | 'tax' | 'reversal';
 export interface Transaction {
   id: string;
   type: TransactionType;
@@ -14,6 +14,7 @@ export interface Transaction {
   fees?: DecimalString;
   taxes?: DecimalString;
   amount?: DecimalString;
+  reversesTransactionId?: string;
 }
 export interface Position {
   securityId: string;
@@ -52,7 +53,21 @@ export function calculateLedger(
     string,
     { quantity: Decimal; costBasis: Decimal; realizedGain: Decimal }
   >();
+  const reversedIds = new Set<string>();
+  const transactionIds = new Set(transactions.map((transaction) => transaction.id));
+  for (const transaction of transactions) {
+    if (transaction.type !== 'reversal') continue;
+    if (
+      !transaction.reversesTransactionId ||
+      !transactionIds.has(transaction.reversesTransactionId)
+    )
+      throw new Error(`Missing reversed transaction for ${transaction.id}`);
+    if (reversedIds.has(transaction.reversesTransactionId))
+      throw new Error(`Transaction reversed more than once: ${transaction.reversesTransactionId}`);
+    reversedIds.add(transaction.reversesTransactionId);
+  }
   const ordered = [...transactions]
+    .filter((transaction) => transaction.type !== 'reversal' && !reversedIds.has(transaction.id))
     .filter((transaction) => !options.asOfDate || transaction.settlementDate <= options.asOfDate)
     .sort((a, b) => a.settlementDate.localeCompare(b.settlementDate) || a.id.localeCompare(b.id));
   for (const tx of ordered) {
