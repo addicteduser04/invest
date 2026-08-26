@@ -21,6 +21,10 @@ const supersessionMigration = await readFile(
   new URL('../migrations/202608060003_atomic_import_supersession.sql', import.meta.url),
   'utf8',
 );
+const reversalMigration = await readFile(
+  new URL('../migrations/202608260001_transaction_reversals.sql', import.meta.url),
+  'utf8',
+);
 describe('migration security invariants', () => {
   it('enables RLS on every browser-facing private table', () => {
     for (const table of ['profiles', 'user_roles', 'portfolios', 'transactions'])
@@ -53,5 +57,16 @@ describe('migration security invariants', () => {
     expect(supersessionMigration).toContain('v_old.owner_id<>v_user');
     expect(supersessionMigration).toContain('supersedes_import_id=p_supersedes_import_id');
     expect(supersessionMigration).toContain("set search_path='' ");
+  });
+  it('protects immutable reversal and replacement accounting at the database boundary', () => {
+    expect(reversalMigration).toContain('private.transaction_reversal_requests');
+    expect(reversalMigration).toContain("v_original.transaction_type='reversal'");
+    expect(reversalMigration).toContain('for update');
+    expect(reversalMigration).toContain("set search_path = ''");
+    expect(reversalMigration).toContain('public.record_transaction(');
+    expect(reversalMigration).toContain('earliest_accounting_date');
+    expect(reversalMigration).not.toMatch(
+      /grant (insert|update|delete).*transaction_reversal_requests.*authenticated/i,
+    );
   });
 });

@@ -19,6 +19,7 @@ const ids = {
   portfolioA: randomUUID(),
   portfolioB: randomUUID(),
   importPortfolio: randomUUID(),
+  reversalPortfolio: randomUUID(),
 };
 
 async function connect() {
@@ -94,8 +95,15 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
       ids.admin,
     ]);
     await adminClient.query(
-      "insert into public.portfolios(id,owner_id,name) values($1,$2,'A'),($3,$4,'B'),($5,$2,'Imports')",
-      [ids.portfolioA, ids.userA, ids.portfolioB, ids.userB, ids.importPortfolio],
+      "insert into public.portfolios(id,owner_id,name) values($1,$2,'A'),($3,$4,'B'),($5,$2,'Imports'),($6,$2,'Reversals')",
+      [
+        ids.portfolioA,
+        ids.userA,
+        ids.portfolioB,
+        ids.userB,
+        ids.importPortfolio,
+        ids.reversalPortfolio,
+      ],
     );
     const result = await adminClient.query<{ id: string }>(
       "select id from market.securities where ticker='SYN-IAM'",
@@ -105,6 +113,10 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
 
   afterAll(async () => {
     if (!adminClient) return;
+    await adminClient.query(
+      'delete from private.transaction_reversal_requests where portfolio_id=$1',
+      [ids.reversalPortfolio],
+    );
     await adminClient.query('delete from public.transaction_import_attempts where owner_id=$1', [
       ids.userA,
     ]);
@@ -117,16 +129,16 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
     ]);
     await adminClient.query(
       'delete from private.cash_ledger_entries where portfolio_id=any($1::uuid[])',
-      [[ids.portfolioA, ids.portfolioB, ids.importPortfolio]],
+      [[ids.portfolioA, ids.portfolioB, ids.importPortfolio, ids.reversalPortfolio]],
     );
     await adminClient.query('delete from private.outbox where aggregate_id=any($1::uuid[])', [
-      [ids.portfolioA, ids.portfolioB, ids.importPortfolio],
+      [ids.portfolioA, ids.portfolioB, ids.importPortfolio, ids.reversalPortfolio],
     ]);
     await adminClient.query('delete from public.transactions where portfolio_id=any($1::uuid[])', [
-      [ids.portfolioA, ids.portfolioB, ids.importPortfolio],
+      [ids.portfolioA, ids.portfolioB, ids.importPortfolio, ids.reversalPortfolio],
     ]);
     await adminClient.query('delete from public.portfolios where id=any($1::uuid[])', [
-      [ids.portfolioA, ids.portfolioB, ids.importPortfolio],
+      [ids.portfolioA, ids.portfolioB, ids.importPortfolio, ids.reversalPortfolio],
     ]);
     await adminClient.query('delete from auth.users where id=any($1::uuid[])', [
       [ids.userA, ids.userB, ids.admin],
@@ -776,14 +788,14 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
       (await asUser(ids.userA, 'select id from public.portfolios')).rows
         .map((row) => row.id)
         .sort(),
-    ).toEqual([ids.portfolioA, ids.importPortfolio].sort());
+    ).toEqual([ids.portfolioA, ids.importPortfolio, ids.reversalPortfolio].sort());
     expect((await asUser(ids.userB, 'select id from public.portfolios')).rows).toEqual([
       { id: ids.portfolioB },
     ]);
     expect((await asUser(ids.admin, 'select id from public.portfolios')).rowCount).toBe(0);
     expect(
       (await asDatabaseRole('service_role', 'select id from public.portfolios')).rowCount,
-    ).toBe(3);
+    ).toBe(4);
     await expect(
       asUser(ids.userB, "update public.portfolios set name='forged' where id=$1 returning id", [
         ids.portfolioA,
@@ -858,5 +870,195 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
       [ids.portfolioA, securityId],
     );
     expect(result.rows[0]).toEqual({ cash: '763.000000', quantity: '7.00000000' });
+  });
+
+  async function reverse(
+    userId: string | null,
+    portfolioId: string,
+    transactionId: string,
+    key = randomUUID(),
+    replacement: Record<string, unknown> | null = null,
+  ) {
+    return asUser<{
+      result: {
+        requestId: string;
+        reversalTransactionId: string;
+        replacementTransactionId: string | null;
+        repeated: boolean;
+      };
+    }>(userId, 'select public.reverse_transaction($1,$2,$3,$4,$5) result', [
+      portfolioId,
+      transactionId,
+      'Correction documentée',
+      key,
+      replacement,
+    ]);
+  }
+
+  it.each([
+    ['deposit', '100', null, null],
+    ['withdrawal', '10', null, null],
+    ['buy', null, '2', '20'],
+    ['sell', null, '1', '25'],
+    ['dividend', '8', null, null],
+    ['fee', '2', null, null],
+    ['tax', '1', null, null],
+  ] as const)(
+    'creates a server-derived immutable reversal for %s',
+    async (type, amount, quantity, price) => {
+      await record(ids.userA, ids.reversalPortfolio, 'deposit', randomUUID(), '1000');
+      if (type === 'sell')
+        await record(
+          ids.userA,
+          ids.reversalPortfolio,
+          'buy',
+          randomUUID(),
+          null,
+          securityId,
+          '2',
+          '20',
+        );
+      const original = await record(
+        ids.userA,
+        ids.reversalPortfolio,
+        type,
+        randomUUID(),
+        amount,
+        quantity ? securityId : null,
+        quantity,
+        price,
+      );
+      const originalId = original.rows[0]!.id;
+      const before = await adminClient.query<{ effect: string }>(
+        'select net_amount::text effect from public.transactions where id=$1',
+        [originalId],
+      );
+      const result = await reverse(ids.userA, ids.reversalPortfolio, originalId);
+      const persisted = await adminClient.query<{
+        transaction_type: string;
+        reverses_transaction_id: string;
+        effect: string;
+      }>(
+        'select transaction_type,reverses_transaction_id,net_amount::text effect from public.transactions where id=$1',
+        [result.rows[0]!.result.reversalTransactionId],
+      );
+      expect(persisted.rows[0]).toEqual({
+        transaction_type: 'reversal',
+        reverses_transaction_id: originalId,
+        effect: (-Number(before.rows[0]!.effect)).toFixed(6),
+      });
+      await expect(reverse(ids.userA, ids.reversalPortfolio, originalId)).rejects.toThrow(
+        /ALREADY_REVERSED/,
+      );
+      await expect(
+        reverse(ids.userA, ids.reversalPortfolio, result.rows[0]!.result.reversalTransactionId),
+      ).rejects.toThrow(/REVERSAL_OF_REVERSAL_PROHIBITED/);
+    },
+  );
+
+  it('is idempotent and serializes concurrent reversal requests', async () => {
+    const original = await record(
+      ids.userA,
+      ids.reversalPortfolio,
+      'withdrawal',
+      randomUUID(),
+      '3',
+    );
+    const key = randomUUID();
+    const [first, second] = await Promise.all([
+      reverse(ids.userA, ids.reversalPortfolio, original.rows[0]!.id, key),
+      reverse(ids.userA, ids.reversalPortfolio, original.rows[0]!.id, key),
+    ]);
+    expect(first.rows[0]!.result.reversalTransactionId).toBe(
+      second.rows[0]!.result.reversalTransactionId,
+    );
+    const count = await adminClient.query<{ requests: string; reversals: string; outbox: string }>(
+      `select
+        (select count(*)::text from private.transaction_reversal_requests where original_transaction_id=$1) requests,
+        (select count(*)::text from public.transactions where reverses_transaction_id=$1) reversals,
+        (select count(*)::text from private.outbox where idempotency_key='reversal:'||$2) outbox`,
+      [original.rows[0]!.id, key],
+    );
+    expect(count.rows[0]).toEqual({ requests: '1', reversals: '1', outbox: '1' });
+  });
+
+  it('atomically creates a valid replacement and rolls back an invalid replacement', async () => {
+    const original = await record(ids.userA, ids.reversalPortfolio, 'fee', randomUUID(), '4');
+    const result = await reverse(
+      ids.userA,
+      ids.reversalPortfolio,
+      original.rows[0]!.id,
+      randomUUID(),
+      {
+        type: 'fee',
+        settlementDate: '2026-08-20',
+        amount: '2',
+      },
+    );
+    expect(result.rows[0]!.result.replacementTransactionId).toBeTruthy();
+
+    const invalidOriginal = await record(
+      ids.userA,
+      ids.reversalPortfolio,
+      'tax',
+      randomUUID(),
+      '1',
+    );
+    const before = await adminClient.query<{
+      transactions: string;
+      requests: string;
+      outbox: string;
+    }>(
+      `select
+        (select count(*)::text from public.transactions where portfolio_id=$1) transactions,
+        (select count(*)::text from private.transaction_reversal_requests where portfolio_id=$1) requests,
+        (select count(*)::text from private.outbox where aggregate_id=$1) outbox`,
+      [ids.reversalPortfolio],
+    );
+    await expect(
+      reverse(ids.userA, ids.reversalPortfolio, invalidOriginal.rows[0]!.id, randomUUID(), {
+        type: 'withdrawal',
+        settlementDate: '2026-08-20',
+        amount: '999999',
+      }),
+    ).rejects.toThrow(/REVERSAL_INSUFFICIENT_CASH/);
+    const after = await adminClient.query<{
+      transactions: string;
+      requests: string;
+      outbox: string;
+    }>(
+      `select
+        (select count(*)::text from public.transactions where portfolio_id=$1) transactions,
+        (select count(*)::text from private.transaction_reversal_requests where portfolio_id=$1) requests,
+        (select count(*)::text from private.outbox where aggregate_id=$1) outbox`,
+      [ids.reversalPortfolio],
+    );
+    expect(after.rows[0]).toEqual(before.rows[0]);
+  });
+
+  it('rejects anonymous, cross-user, forged-portfolio and direct private-table access', async () => {
+    const original = await record(ids.userA, ids.reversalPortfolio, 'deposit', randomUUID(), '5');
+    await expect(reverse(null, ids.reversalPortfolio, original.rows[0]!.id)).rejects.toThrow(
+      /permission denied/,
+    );
+    await expect(reverse(ids.userB, ids.reversalPortfolio, original.rows[0]!.id)).rejects.toThrow(
+      /FORBIDDEN_PORTFOLIO/,
+    );
+    await expect(reverse(ids.userA, ids.portfolioB, original.rows[0]!.id)).rejects.toThrow(
+      /FORBIDDEN_PORTFOLIO/,
+    );
+    await expect(
+      asUser(ids.userA, 'select * from private.transaction_reversal_requests'),
+    ).rejects.toThrow(/permission denied/);
+    await expect(
+      asUser(
+        ids.userA,
+        `insert into private.transaction_reversal_requests(
+          portfolio_id,original_transaction_id,reversal_transaction_id,actor_id,reason,status,
+          idempotency_reference,earliest_accounting_date,outbox_id,completed_at)
+         values($1,$2,$2,$3,'forged reason','completed',$4,current_date,$2,now())`,
+        [ids.reversalPortfolio, original.rows[0]!.id, ids.userA, randomUUID()],
+      ),
+    ).rejects.toThrow(/permission denied/);
   });
 });
