@@ -15,6 +15,11 @@ export interface Transaction {
   taxes?: DecimalString;
   amount?: DecimalString;
   reversesTransactionId?: string;
+  /** Immutable ledger insertion time. Required for correction-time historical replay. */
+  recordedAt?: string;
+  /** Economic visibility time; defaults to settlement-day midnight. */
+  effectiveAt?: string;
+  ledgerSequence?: string;
 }
 export interface Position {
   securityId: string;
@@ -26,6 +31,10 @@ export interface Position {
 export interface LedgerResult {
   cash: DecimalString;
   positions: Position[];
+  realizedGain: DecimalString;
+  transactionCount: number;
+  lastTransactionId: string | null;
+  lastTransactionRecordedAt: string | null;
 }
 export interface DatedPrice {
   value: DecimalString;
@@ -46,36 +55,87 @@ const out = (value: Decimal) => value.toFixed();
 
 export function calculateLedger(
   transactions: readonly Transaction[],
-  options: { asOfDate?: string } = {},
+  options: { asOfDate?: string; asOf?: string } = {},
 ): LedgerResult {
   let cash = new Decimal(0);
   const positions = new Map<
     string,
     { quantity: Decimal; costBasis: Decimal; realizedGain: Decimal }
   >();
-  const reversedIds = new Set<string>();
   const transactionIds = new Set(transactions.map((transaction) => transaction.id));
-  for (const transaction of transactions) {
-    if (transaction.type !== 'reversal') continue;
-    if (
-      !transaction.reversesTransactionId ||
-      !transactionIds.has(transaction.reversesTransactionId)
-    )
-      throw new Error(`Missing reversed transaction for ${transaction.id}`);
-    if (reversedIds.has(transaction.reversesTransactionId))
-      throw new Error(`Transaction reversed more than once: ${transaction.reversesTransactionId}`);
-    reversedIds.add(transaction.reversesTransactionId);
-  }
+  const reversedIds = new Set<string>();
+  const effects = new Map<
+    string,
+    {
+      cash: Decimal;
+      securityId?: string;
+      quantity: Decimal;
+      costBasis: Decimal;
+      realizedGain: Decimal;
+    }
+  >();
+  const effectiveAt = (transaction: Transaction) =>
+    transaction.effectiveAt ?? `${transaction.settlementDate}T00:00:00.000Z`;
+  const cutoff =
+    options.asOf ?? (options.asOfDate ? `${options.asOfDate}T23:59:59.999Z` : undefined);
+  const cutoffTime = cutoff ? Date.parse(cutoff) : undefined;
+  if (cutoff && !Number.isFinite(cutoffTime)) throw new Error('Invalid as-of timestamp');
   const ordered = [...transactions]
-    .filter((transaction) => transaction.type !== 'reversal' && !reversedIds.has(transaction.id))
-    .filter((transaction) => !options.asOfDate || transaction.settlementDate <= options.asOfDate)
-    .sort((a, b) => a.settlementDate.localeCompare(b.settlementDate) || a.id.localeCompare(b.id));
+    .map((transaction) => {
+      const time = Date.parse(effectiveAt(transaction));
+      if (!Number.isFinite(time))
+        throw new Error(`Invalid effective time for transaction ${transaction.id}`);
+      return { transaction, time };
+    })
+    .filter(({ time }) => cutoffTime === undefined || time <= cutoffTime)
+    .sort(
+      (a, b) =>
+        a.time - b.time ||
+        (a.transaction.ledgerSequence && b.transaction.ledgerSequence
+          ? new Decimal(a.transaction.ledgerSequence).cmp(b.transaction.ledgerSequence)
+          : (a.transaction.recordedAt ?? '').localeCompare(b.transaction.recordedAt ?? '')) ||
+        a.transaction.id.localeCompare(b.transaction.id),
+    )
+    .map(({ transaction }) => transaction);
   for (const tx of ordered) {
     const fees = d(tx.fees);
     const taxes = d(tx.taxes);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(tx.settlementDate))
       throw new Error(`Invalid settlement date for transaction ${tx.id}`);
     if (fees.lt(0) || taxes.lt(0)) throw new Error('Financial values must be non-negative');
+    if (tx.type === 'reversal') {
+      if (!tx.reversesTransactionId || !transactionIds.has(tx.reversesTransactionId))
+        throw new Error(`Missing reversed transaction for ${tx.id}`);
+      if (reversedIds.has(tx.reversesTransactionId))
+        throw new Error(`Transaction reversed more than once: ${tx.reversesTransactionId}`);
+      const original = effects.get(tx.reversesTransactionId);
+      if (!original) throw new Error(`Reversal precedes original transaction: ${tx.id}`);
+      cash = cash.minus(original.cash);
+      if (original.securityId) {
+        const current = positions.get(original.securityId);
+        if (!current) throw new Error(`Missing position for reversal ${tx.id}`);
+        current.quantity = current.quantity.minus(original.quantity);
+        current.costBasis = current.costBasis.minus(original.costBasis);
+        current.realizedGain = current.realizedGain.minus(original.realizedGain);
+        if (current.quantity.lt(0) || current.costBasis.lt(0))
+          throw new Error(`Reversal creates an invalid position after transaction ${tx.id}`);
+      }
+      reversedIds.add(tx.reversesTransactionId);
+      effects.set(tx.id, {
+        cash: original.cash.negated(),
+        ...(original.securityId ? { securityId: original.securityId } : {}),
+        quantity: original.quantity.negated(),
+        costBasis: original.costBasis.negated(),
+        realizedGain: original.realizedGain.negated(),
+      });
+      if (cash.lt(0)) throw new Error(`Negative cash after transaction ${tx.id}`);
+      continue;
+    }
+    const beforeCash = cash;
+    let securityId: string | undefined;
+    let quantityEffect = new Decimal(0);
+    let costBasisEffect = new Decimal(0);
+    let realizedEffect = new Decimal(0);
     if (tx.type === 'deposit') {
       if (!tx.amount || d(tx.amount).lte(0)) throw new Error('Deposit must be positive');
       cash = cash.plus(d(tx.amount));
@@ -100,6 +160,7 @@ export function calculateLedger(
         costBasis: new Decimal(0),
         realizedGain: new Decimal(0),
       };
+      let disposedCost = new Decimal(0);
       if (tx.type === 'buy') {
         current.quantity = current.quantity.plus(quantity);
         current.costBasis = current.costBasis.plus(gross).plus(fees).plus(taxes);
@@ -109,26 +170,49 @@ export function calculateLedger(
         const averageCost = current.quantity.isZero()
           ? new Decimal(0)
           : current.costBasis.div(current.quantity);
-        const disposedCost = averageCost.times(quantity);
+        disposedCost = averageCost.times(quantity);
         const proceeds = gross.minus(fees).minus(taxes);
         current.quantity = current.quantity.minus(quantity);
         current.costBasis = current.costBasis.minus(disposedCost);
         current.realizedGain = current.realizedGain.plus(proceeds.minus(disposedCost));
+        realizedEffect = proceeds.minus(disposedCost);
         cash = cash.plus(proceeds);
       }
+      securityId = tx.securityId;
+      quantityEffect = tx.type === 'buy' ? quantity : quantity.negated();
+      costBasisEffect = tx.type === 'buy' ? gross.plus(fees).plus(taxes) : disposedCost.negated();
       positions.set(tx.securityId, current);
     }
     if (cash.lt(0)) throw new Error(`Negative cash after transaction ${tx.id}`);
+    effects.set(tx.id, {
+      cash: cash.minus(beforeCash),
+      ...(securityId ? { securityId } : {}),
+      quantity: quantityEffect,
+      costBasis: costBasisEffect,
+      realizedGain: realizedEffect,
+    });
   }
+  const last = ordered.at(-1);
   return {
     cash: out(cash),
-    positions: [...positions.entries()].map(([securityId, p]) => ({
-      securityId,
-      quantity: out(p.quantity),
-      costBasis: out(p.costBasis),
-      averageCost: out(p.quantity.isZero() ? new Decimal(0) : p.costBasis.div(p.quantity)),
-      realizedGain: out(p.realizedGain),
-    })),
+    positions: [...positions.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([securityId, p]) => ({
+        securityId,
+        quantity: out(p.quantity),
+        costBasis: out(p.costBasis),
+        averageCost: out(p.quantity.isZero() ? new Decimal(0) : p.costBasis.div(p.quantity)),
+        realizedGain: out(p.realizedGain),
+      })),
+    realizedGain: out(
+      [...positions.values()].reduce(
+        (sum, position) => sum.plus(position.realizedGain),
+        new Decimal(0),
+      ),
+    ),
+    transactionCount: ordered.length,
+    lastTransactionId: last?.id ?? null,
+    lastTransactionRecordedAt: last?.recordedAt ?? null,
   };
 }
 
