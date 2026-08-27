@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { localizeError, reversalInputSchema, transactionInputSchema } from './index';
+import {
+  localizeError,
+  portfolioStateSchema,
+  reversalInputSchema,
+  transactionInputSchema,
+} from './index';
 describe('shared contracts', () => {
   it('keeps behavior codes stable while localizing messages', () => {
     expect(localizeError({ code: 'INSUFFICIENT_CASH' }, 'fr')).toContain('Trésorerie');
@@ -52,5 +57,21 @@ describe('shared contracts', () => {
         idempotencyReference: 'reversal-reference-0001',
       }).success,
     ).toBe(false);
+  });
+  it('keeps portfolio-state money and quantities as exact decimal strings', () => {
+    const state = {
+      portfolioId: '00000000-0000-4000-8000-000000000001',
+      asOf: '2026-08-27T12:00:00.000Z',
+      cash: '0.3000000001',
+      realizedGain: '-1.25',
+      positions: [],
+      transactionCount: 0,
+      lastTransactionId: null,
+      lastTransactionRecordedAt: null,
+      source: 'replay',
+      ruleVersion: 'average-cost-v1',
+    };
+    expect(portfolioStateSchema.parse(state).cash).toBe('0.3000000001');
+    expect(portfolioStateSchema.safeParse({ ...state, cash: 0.3 }).success).toBe(false);
   });
 });

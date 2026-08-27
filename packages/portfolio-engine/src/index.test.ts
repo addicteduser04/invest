@@ -111,6 +111,10 @@ describe('Sprint 2 accounting rules', () => {
           realizedGain: '92.5',
         },
       ],
+      realizedGain: '92.5',
+      transactionCount: 8,
+      lastTransactionId: '08',
+      lastTransactionRecordedAt: null,
     });
   });
 
@@ -171,6 +175,54 @@ describe('Sprint 2 accounting rules', () => {
     expect(ledger.positions[0]!.averageCost).toBe('0.1');
   });
 
+  it('reconstructs empty, between-transaction, and fully closed position states exactly', () => {
+    const transactions = [
+      {
+        id: 'z-deposit',
+        type: 'deposit' as const,
+        settlementDate: '2026-01-02',
+        amount: '100',
+        effectiveAt: '2026-01-02T10:00:00.000Z',
+        ledgerSequence: '1',
+      },
+      {
+        id: 'a-buy',
+        type: 'buy' as const,
+        settlementDate: '2026-01-02',
+        securityId: 'IAM',
+        quantity: '2',
+        unitPrice: '10',
+        fees: '2',
+        effectiveAt: '2026-01-02T10:00:00.000Z',
+        ledgerSequence: '2',
+      },
+      {
+        id: 'sale',
+        type: 'sell' as const,
+        settlementDate: '2026-01-03',
+        securityId: 'IAM',
+        quantity: '2',
+        unitPrice: '15',
+        fees: '1',
+        ledgerSequence: '3',
+      },
+    ];
+    expect(calculateLedger(transactions, { asOf: '2026-01-01T23:59:59.999Z' })).toMatchObject({
+      cash: '0',
+      positions: [],
+      transactionCount: 0,
+    });
+    expect(calculateLedger(transactions, { asOf: '2026-01-02T10:00:00.000Z' })).toMatchObject({
+      cash: '78',
+      transactionCount: 2,
+    });
+    expect(calculateLedger(transactions)).toMatchObject({
+      cash: '107',
+      realizedGain: '7',
+      positions: [{ securityId: 'IAM', quantity: '0', costBasis: '0', averageCost: '0' }],
+    });
+  });
+
   it('treats a linked reversal as removal of the immutable original for all as-of calculations', () => {
     const reversal = {
       id: '09',
@@ -178,17 +230,53 @@ describe('Sprint 2 accounting rules', () => {
       settlementDate: '2026-01-03',
       reversesTransactionId: '03',
     };
-    expect(calculateLedger([...history, reversal])).toEqual(
-      calculateLedger(history.filter((transaction) => transaction.id !== '03')),
+    const corrected = calculateLedger([...history, reversal]);
+    const withoutOriginal = calculateLedger(
+      history.filter((transaction) => transaction.id !== '03'),
     );
-    expect(calculateLedger([...history, reversal], { asOfDate: '2026-01-03' })).toEqual(
-      calculateLedger(
-        history.filter((transaction) => transaction.id !== '03'),
-        {
-          asOfDate: '2026-01-03',
-        },
-      ),
+    expect({ cash: corrected.cash, positions: corrected.positions }).toEqual({
+      cash: withoutOriginal.cash,
+      positions: withoutOriginal.positions,
+    });
+    const correctedAsOf = calculateLedger([...history, reversal], { asOfDate: '2026-01-03' });
+    const withoutOriginalAsOf = calculateLedger(
+      history.filter((transaction) => transaction.id !== '03'),
+      { asOfDate: '2026-01-03' },
     );
+    expect({ cash: correctedAsOf.cash, positions: correctedAsOf.positions }).toEqual({
+      cash: withoutOriginalAsOf.cash,
+      positions: withoutOriginalAsOf.positions,
+    });
+  });
+
+  it('preserves the historical state before a later correction becomes effective', () => {
+    const original = {
+      id: 'original',
+      type: 'fee' as const,
+      settlementDate: '2026-01-02',
+      amount: '10',
+      recordedAt: '2026-01-02T10:00:00.000Z',
+    };
+    const transactions = [
+      {
+        id: 'deposit',
+        type: 'deposit' as const,
+        settlementDate: '2026-01-01',
+        amount: '100',
+        recordedAt: '2026-01-01T10:00:00.000Z',
+      },
+      original,
+      {
+        id: 'reversal',
+        type: 'reversal' as const,
+        settlementDate: '2026-01-02',
+        reversesTransactionId: original.id,
+        recordedAt: '2026-02-01T10:00:00.000Z',
+        effectiveAt: '2026-02-01T10:00:00.000Z',
+      },
+    ];
+    expect(calculateLedger(transactions, { asOf: '2026-01-15T00:00:00.000Z' }).cash).toBe('90');
+    expect(calculateLedger(transactions, { asOf: '2026-02-02T00:00:00.000Z' }).cash).toBe('100');
   });
 
   it('rejects orphan and duplicate reversals', () => {

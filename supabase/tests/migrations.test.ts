@@ -25,6 +25,10 @@ const reversalMigration = await readFile(
   new URL('../migrations/202608260001_transaction_reversals.sql', import.meta.url),
   'utf8',
 );
+const portfolioStateMigration = await readFile(
+  new URL('../migrations/202608270001_portfolio_state_snapshots.sql', import.meta.url),
+  'utf8',
+);
 describe('migration security invariants', () => {
   it('enables RLS on every browser-facing private table', () => {
     for (const table of ['profiles', 'user_roles', 'portfolios', 'transactions'])
@@ -68,5 +72,16 @@ describe('migration security invariants', () => {
     expect(reversalMigration).not.toMatch(
       /grant (insert|update|delete).*transaction_reversal_requests.*authenticated/i,
     );
+  });
+  it('keeps portfolio snapshots derived, normalized, private and atomically generated', () => {
+    expect(portfolioStateMigration).toContain('analytics.portfolio_state_positions');
+    expect(portfolioStateMigration).toContain('boundary_sequence');
+    expect(portfolioStateMigration).toContain('for update of o,p skip locked');
+    expect(portfolioStateMigration).toContain("set search_path=''");
+    expect(portfolioStateMigration).toContain('enable row level security');
+    expect(portfolioStateMigration).not.toMatch(
+      /grant (insert|update|delete).*portfolio_state_(snapshots|positions).*authenticated/i,
+    );
+    expect(portfolioStateMigration).not.toMatch(/\b(float|real|double precision)\b/i);
   });
 });
