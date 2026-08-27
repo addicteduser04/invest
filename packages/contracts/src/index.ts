@@ -154,3 +154,24 @@ export const reversalInputSchema = z.object({
   idempotencyReference: z.string().min(16).max(128),
   replacement: transactionInputSchema.omit({ portfolioId: true, idempotencyKey: true }).optional(),
 });
+
+export const portfolioStatePositionSchema = z.object({
+  securityId: z.uuid(),
+  quantity: decimalSchema,
+  averageCost: decimalSchema,
+  costBasis: decimalSchema,
+  realizedGain: z.string().regex(/^-?\d+(?:\.\d+)?$/),
+});
+export const portfolioStateSchema = z.object({
+  portfolioId: z.uuid(),
+  asOf: z.iso.datetime({ offset: true }),
+  cash: z.string().regex(/^-?\d+(?:\.\d+)?$/),
+  realizedGain: z.string().regex(/^-?\d+(?:\.\d+)?$/),
+  positions: z.array(portfolioStatePositionSchema),
+  transactionCount: z.number().int().nonnegative(),
+  lastTransactionId: z.uuid().nullable(),
+  lastTransactionRecordedAt: z.iso.datetime({ offset: true }).nullable(),
+  source: z.enum(['snapshot', 'replay']),
+  ruleVersion: z.literal('average-cost-v1'),
+});
+export type PortfolioState = z.infer<typeof portfolioStateSchema>;
