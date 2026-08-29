@@ -1,0 +1,23 @@
+{
+  "brand": "SaifInvest",
+  "synthetic": "Demonstration — synthetic or administrator-supplied data until licensed production feeds are enabled",
+  "welcome": "Understand your Moroccan investments with clarity",
+  "subtitle": "Track portfolios, performance and Casablanca-listed securities in one place.",
+  "register": "Create account",
+  "login": "Sign in",
+  "portfolio": "Portfolio",
+  "total": "Total value",
+  "cash": "Recorded cash",
+  "securities": "Securities",
+  "gain": "Unrealized P&L",
+  "freshness": "Valuation date",
+  "positions": "Holdings",
+  "ticker": "Ticker",
+  "quantity": "Quantity",
+  "price": "Price",
+  "value": "Value",
+  "admin": "Administrator CSV import",
+  "upload": "Choose CSV file",
+  "preview": "Preview and validate",
+  "approval": "Explicit approval by a second administrator is required before publication."
+}

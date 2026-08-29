@@ -1,5 +1,7 @@
 import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { asLocale, direction } from '@/lib/i18n';
+import { SiteNav } from '@/components/site-nav';
 import { ReversalWorkflow } from './reversal-workflow';
 
 export default async function ReverseTransactionPage({
@@ -7,13 +9,13 @@ export default async function ReverseTransactionPage({
 }: {
   params: Promise<{ locale: string; transactionId: string }>;
 }) {
-  const { locale, transactionId } = await params;
-  const language = locale === 'ar' ? 'ar' : 'fr';
+  const { locale: rawLocale, transactionId } = await params;
+  const locale = asLocale(rawLocale);
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) redirect(`/${language}/login`);
+  if (!user) redirect(`/${locale}/login`);
   const { data: transaction } = await supabase
     .from('transactions')
     .select(
@@ -44,10 +46,11 @@ export default async function ReverseTransactionPage({
         .maybeSingle(),
     ]);
   return (
-    <main className="shell" dir={language === 'ar' ? 'rtl' : 'ltr'}>
-      <section className="card">
+    <main className="app-shell" dir={direction(locale)}>
+      <SiteNav locale={locale} authenticated />
+      <section className="card" style={{ marginTop: 40 }}>
         <ReversalWorkflow
-          locale={language}
+          locale={locale}
           transaction={{
             id: transaction.id,
             portfolioId: transaction.portfolio_id,

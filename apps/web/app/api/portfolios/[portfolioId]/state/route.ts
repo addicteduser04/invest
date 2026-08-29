@@ -1,5 +1,5 @@
 import { calculateLedger, type Transaction } from '@bvc/portfolio-engine';
-import { localizeError, portfolioStateSchema } from '@bvc/contracts';
+import { localizeError, localeSchema, portfolioStateSchema } from '@bvc/contracts';
 import { createClient } from '@/lib/supabase/server';
 
 interface ReplayRow {
@@ -23,7 +23,8 @@ export async function GET(
   { params }: { params: Promise<{ portfolioId: string }> },
 ) {
   const url = new URL(request.url);
-  const locale = url.searchParams.get('locale') === 'ar' ? 'ar' : 'fr';
+  const localeResult = localeSchema.safeParse(url.searchParams.get('locale'));
+  const locale = localeResult.success ? localeResult.data : 'fr';
   const requestedAsOf = url.searchParams.get('as_of');
   const asOf = requestedAsOf ? new Date(requestedAsOf) : new Date();
   if (Number.isNaN(asOf.valueOf())) {

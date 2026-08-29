@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = await request.json();
-  const locale = body.locale === 'ar' ? 'ar' : 'fr';
+  const locale = body.locale === 'en' || body.locale === 'ar' ? body.locale : 'fr';
   const supabase = await createClient();
   const {
     data: { user },

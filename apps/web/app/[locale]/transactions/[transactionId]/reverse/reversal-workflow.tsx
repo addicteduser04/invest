@@ -1,5 +1,6 @@
 'use client';
 import React, { useRef, useState } from 'react';
+import type { Locale } from '@bvc/contracts';
 
 export type ReversalTransaction = {
   id: string;
@@ -22,6 +23,32 @@ export type ReversalTransaction = {
 };
 
 const copy = {
+  en: {
+    title: 'Reverse or replace transaction',
+    permanent:
+      'The original transaction remains permanently in history. A linked counter-entry records the correction.',
+    reason: 'Detailed reversal reason',
+    replace: 'Create a replacement transaction',
+    confirm: 'I confirm that I reviewed the transaction and its effects',
+    submit: 'Record correction',
+    busy: 'Recording correction…',
+    success: 'Correction recorded. Original history is preserved.',
+    back: 'Back to transaction history',
+    portfolio: 'Portfolio',
+    type: 'Type',
+    date: 'Accounting date',
+    security: 'Security',
+    quantity: 'Quantity',
+    price: 'Unit price',
+    fees: 'Fees',
+    taxes: 'Taxes',
+    cash: 'Original recorded cash effect',
+    inverse: 'Server-derived counter-effect',
+    imported: 'Source import',
+    replacementType: 'Replacement type',
+    replacementDate: 'Replacement date',
+    amount: 'Amount',
+  },
   fr: {
     title: 'Annuler ou remplacer l’opération',
     permanent:
@@ -75,11 +102,18 @@ const copy = {
   },
 };
 
+const decimalWithSign = (value: string) =>
+  value.startsWith('-') || value === '0' ? value : `+${value}`;
+const negateDecimal = (value: string) => {
+  if (value === '0' || /^0(?:\.0+)?$/.test(value)) return value;
+  return value.startsWith('-') ? value.slice(1) : `-${value}`;
+};
+
 export function ReversalWorkflow({
   locale,
   transaction,
 }: {
-  locale: 'fr' | 'ar';
+  locale: Locale;
   transaction: ReversalTransaction;
 }) {
   const t = copy[locale];
@@ -157,11 +191,8 @@ export function ReversalWorkflow({
           [t.price, transaction.unitPrice],
           [t.fees, transaction.fees],
           [t.taxes, transaction.taxes],
-          [t.cash, `${Number(transaction.netAmount) >= 0 ? '+' : ''}${transaction.netAmount} MAD`],
-          [
-            t.inverse,
-            `${Number(transaction.netAmount) <= 0 ? '+' : '-'}${Math.abs(Number(transaction.netAmount)).toFixed(6)} MAD`,
-          ],
+          [t.cash, `${decimalWithSign(transaction.netAmount)} MAD`],
+          [t.inverse, `${decimalWithSign(negateDecimal(transaction.netAmount))} MAD`],
           [t.imported, transaction.importId],
         ].flatMap(([label, value]) =>
           value
@@ -178,7 +209,11 @@ export function ReversalWorkflow({
       </dl>
       {transaction.reversedById ? (
         <p className="error-text" role="alert">
-          {locale === 'ar' ? 'تم عكس هذه العملية مسبقاً.' : 'Cette opération est déjà annulée.'}
+          {locale === 'ar'
+            ? 'تم عكس هذه العملية مسبقاً.'
+            : locale === 'en'
+              ? 'This transaction has already been reversed.'
+              : 'Cette opération est déjà annulée.'}
         </p>
       ) : (
         <form className="form panel" onSubmit={(event) => void submit(event)}>

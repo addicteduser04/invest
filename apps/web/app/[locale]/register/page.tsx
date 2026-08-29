@@ -1,28 +1,39 @@
 import { register } from '../auth-actions';
-export default async function Register({ params }: { params: Promise<{ locale: string }> }) {
-  const { locale } = await params;
-  const ar = locale === 'ar';
+import { asLocale, direction, getUi } from '@/lib/i18n';
+import { SiteNav } from '@/components/site-nav';
+
+export default async function Register({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ locale: string }>;
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { locale: rawLocale } = await params;
+  const { error } = await searchParams;
+  const locale = asLocale(rawLocale);
+  const t = getUi(locale);
   return (
-    <main className="shell" dir={ar ? 'rtl' : 'ltr'}>
-      <nav className="nav">
-        <a className="brand" href={`/${locale}`}>
-          BVC Portfolio
-        </a>
-      </nav>
-      <section className="card">
-        <h1>{ar ? 'إنشاء حساب' : 'Créer un compte'}</h1>
+    <main className="app-shell auth-shell" dir={direction(locale)}>
+      <SiteNav locale={locale} />
+      <section className="auth-card">
+        <div className="auth-copy">
+          <p className="eyebrow">SaifInvest</p>
+          <h1>{t.registerTitle}</h1>
+          <p>{t.notBroker}</p>
+        </div>
         <form className="form" action={register}>
           <input type="hidden" name="locale" value={locale} />
           <label>
-            {ar ? 'الاسم' : 'Nom'}
+            {t.name}
             <input required name="displayName" autoComplete="name" />
           </label>
           <label>
-            {ar ? 'البريد الإلكتروني' : 'E-mail'}
+            {t.email}
             <input required name="email" type="email" autoComplete="email" />
           </label>
           <label>
-            {ar ? 'كلمة المرور' : 'Mot de passe'}
+            {t.password}
             <input
               required
               name="password"
@@ -32,8 +43,16 @@ export default async function Register({ params }: { params: Promise<{ locale: s
             />
           </label>
           <button className="button" type="submit">
-            {ar ? 'إنشاء الحساب' : 'Créer le compte'}
+            {t.createAccount}
           </button>
+          {error === 'registration' ? (
+            <p className="error-text" role="alert">
+              {t.registrationFailed}
+            </p>
+          ) : null}
+          <a className="text-link" href={`/${locale}/login`}>
+            {t.signIn}
+          </a>
         </form>
       </section>
     </main>

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-export const localeSchema = z.enum(['fr', 'ar']);
+export const localeSchema = z.enum(['en', 'fr', 'ar']);
 export type Locale = z.infer<typeof localeSchema>;
 export const errorCodeSchema = z.enum([
   'UNAUTHENTICATED',
@@ -45,6 +45,43 @@ export interface AppError {
   row?: number;
 }
 const messages: Record<Locale, Record<ErrorCode, string>> = {
+  en: {
+    UNAUTHENTICATED: 'Authentication required.',
+    FORBIDDEN_PORTFOLIO: 'You do not have access to this portfolio.',
+    INVALID_TRANSACTION_TYPE: 'Invalid transaction type.',
+    INVALID_DECIMAL: 'Invalid decimal value.',
+    INVALID_DATE: 'Invalid date.',
+    UNKNOWN_SECURITY: 'Unknown security.',
+    INSUFFICIENT_CASH: 'Insufficient recorded cash.',
+    INSUFFICIENT_HOLDINGS: 'Insufficient recorded holdings.',
+    DUPLICATE_IDEMPOTENCY_KEY: 'This reference has already been used.',
+    DUPLICATE_IMPORT: 'This file has already been imported.',
+    DUPLICATE_ROW: 'The file contains a duplicate row.',
+    DUPLICATE_EXTERNAL_REFERENCE: 'Duplicate external reference.',
+    EXISTING_TRANSACTION: 'This transaction already exists in the portfolio.',
+    INVALID_FILE: 'The CSV file is empty, malformed, or unsupported.',
+    FILE_TOO_LARGE: 'The file exceeds the allowed size.',
+    TOO_MANY_ROWS: 'The file contains too many rows.',
+    INVALID_MAPPING: 'The column mapping is invalid.',
+    IMPORT_NOT_CONFIRMABLE: 'This import cannot be confirmed.',
+    CONFIRMED_IMPORT_IMMUTABLE: 'A confirmed import cannot be replaced.',
+    IMPORT_VALIDATION_FAILED: 'The import contains validation errors.',
+    ALREADY_REVERSED: 'This transaction has already been reversed.',
+    TRANSACTION_NOT_FOUND: 'Transaction not found.',
+    REVERSAL_OF_REVERSAL_PROHIBITED: 'A reversal entry cannot itself be reversed.',
+    REVERSAL_INSUFFICIENT_CASH: 'The reversal would create negative recorded cash.',
+    REVERSAL_INSUFFICIENT_HOLDINGS: 'The reversal would create a negative position.',
+    INVALID_REVERSAL_REASON: 'A clear reversal reason is required.',
+    INVALID_REVERSAL_IDEMPOTENCY_REFERENCE: 'Invalid reversal request reference.',
+    INVALID_REPLACEMENT: 'The replacement transaction is invalid.',
+    DUPLICATE_REVERSAL_IDEMPOTENCY_REFERENCE: 'This reference belongs to another request.',
+    REVERSAL_CONFLICT: 'A concurrent reversal has already been recorded.',
+    REPLACEMENT_FAILURE: 'Replacement failed; no reversal was applied.',
+    RECALCULATION_PENDING: 'Portfolio recalculation is pending.',
+    MISSING_PRICE: 'Market price unavailable.',
+    STALE_PRICE: 'Market price is stale.',
+    INTERNAL_FAILURE: 'Internal error.',
+  },
   fr: {
     UNAUTHENTICATED: 'Authentification requise.',
     FORBIDDEN_PORTFOLIO: 'Accès au portefeuille interdit.',
@@ -175,3 +212,72 @@ export const portfolioStateSchema = z.object({
   ruleVersion: z.literal('average-cost-v1'),
 });
 export type PortfolioState = z.infer<typeof portfolioStateSchema>;
+
+export const portfolioValuationPositionSchema = portfolioStatePositionSchema.extend({
+  ticker: z.string(),
+  name: z.string(),
+  sector: z.string().nullable(),
+  marketDate: z.iso.date().nullable(),
+  price: decimalSchema.nullable(),
+  marketValue: decimalSchema.nullable(),
+  unrealizedGain: z
+    .string()
+    .regex(/^-?\d+(?:\.\d+)?$/)
+    .nullable(),
+  weightPercent: z
+    .string()
+    .regex(/^\d+(?:\.\d+)?$/)
+    .nullable(),
+  priceStatus: z.enum(['current', 'stale', 'missing']),
+});
+export const portfolioValuationSchema = z.object({
+  portfolioId: z.uuid(),
+  asOf: z.iso.datetime({ offset: true }),
+  valuationDate: z.iso.date(),
+  currency: z.literal('MAD'),
+  cashValue: z.string().regex(/^-?\d+(?:\.\d+)?$/),
+  securitiesValue: decimalSchema,
+  totalValue: z.string().regex(/^-?\d+(?:\.\d+)?$/),
+  realizedGain: z.string().regex(/^-?\d+(?:\.\d+)?$/),
+  netDividendIncome: decimalSchema,
+  standaloneExpenses: decimalSchema,
+  unrealizedGain: z.string().regex(/^-?\d+(?:\.\d+)?$/),
+  totalGain: z.string().regex(/^-?\d+(?:\.\d+)?$/),
+  status: z.enum(['current', 'stale', 'missing']),
+  missingSecurityIds: z.array(z.uuid()),
+  staleSecurityIds: z.array(z.uuid()),
+  positions: z.array(portfolioValuationPositionSchema),
+  ruleVersion: z.literal('average-cost-v1'),
+});
+export type PortfolioValuation = z.infer<typeof portfolioValuationSchema>;
+
+export const performancePointSchema = z.object({
+  date: z.iso.date(),
+  totalValue: z.string().regex(/^-?\d+(?:\.\d+)?$/),
+  externalFlow: z.string().regex(/^-?\d+(?:\.\d+)?$/),
+  periodReturn: z
+    .string()
+    .regex(/^-?\d+(?:\.\d+)?$/)
+    .nullable(),
+  cumulativeReturn: z
+    .string()
+    .regex(/^-?\d+(?:\.\d+)?$/)
+    .nullable(),
+  status: z.enum(['current', 'stale', 'missing']),
+});
+export const portfolioPerformanceSchema = z.object({
+  portfolioId: z.uuid(),
+  from: z.iso.date().nullable(),
+  to: z.iso.date(),
+  twr: z
+    .string()
+    .regex(/^-?\d+(?:\.\d+)?$/)
+    .nullable(),
+  xirr: z
+    .string()
+    .regex(/^-?\d+(?:\.\d+)?$/)
+    .nullable(),
+  points: z.array(performancePointSchema),
+  benchmark: z.object({ available: z.boolean(), label: z.string() }),
+});
+export type PortfolioPerformance = z.infer<typeof portfolioPerformanceSchema>;

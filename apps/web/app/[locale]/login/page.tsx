@@ -1,29 +1,51 @@
 import { login } from '../auth-actions';
-export default async function Login({ params }: { params: Promise<{ locale: string }> }) {
-  const { locale } = await params;
-  const ar = locale === 'ar';
+import { asLocale, direction, getUi } from '@/lib/i18n';
+import { SiteNav } from '@/components/site-nav';
+
+export default async function Login({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ locale: string }>;
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { locale: rawLocale } = await params;
+  const { error } = await searchParams;
+  const locale = asLocale(rawLocale);
+  const t = getUi(locale);
   return (
-    <main className="shell" dir={ar ? 'rtl' : 'ltr'}>
-      <nav className="nav">
-        <a className="brand" href={`/${locale}`}>
-          BVC Portfolio
-        </a>
-      </nav>
-      <section className="card">
-        <h1>{ar ? 'تسجيل الدخول' : 'Connexion'}</h1>
+    <main className="app-shell auth-shell" dir={direction(locale)}>
+      <SiteNav locale={locale} />
+      <section className="auth-card">
+        <div className="auth-copy">
+          <p className="eyebrow">SaifInvest</p>
+          <h1>{t.loginTitle}</h1>
+          <p>{t.notBroker}</p>
+        </div>
         <form className="form" action={login}>
           <input type="hidden" name="locale" value={locale} />
           <label>
-            E-mail
+            {t.email}
             <input required name="email" type="email" autoComplete="email" />
           </label>
           <label>
-            {ar ? 'كلمة المرور' : 'Mot de passe'}
+            {t.password}
             <input required name="password" type="password" autoComplete="current-password" />
           </label>
           <button className="button" type="submit">
-            {ar ? 'الدخول' : 'Se connecter'}
+            {t.signIn}
           </button>
+          {error === 'credentials' ? (
+            <p className="error-text" role="alert">
+              {t.authInvalidCredentials}
+            </p>
+          ) : null}
+          <a className="text-link" href={`/${locale}/forgot-password`}>
+            {t.forgotPassword}
+          </a>
+          <a className="text-link" href={`/${locale}/register`}>
+            {t.createAccount}
+          </a>
         </form>
       </section>
     </main>

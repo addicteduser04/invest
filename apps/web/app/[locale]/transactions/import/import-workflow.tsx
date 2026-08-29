@@ -1,7 +1,8 @@
 'use client';
 import React, { useRef, useState } from 'react';
+import type { Locale } from '@bvc/contracts';
 
-type Portfolio = { id: string; name: string };
+type Portfolio = { id: string; name: string; tracking_mode: 'real_tracking' | 'virtual' };
 type Message = { code: string; message: string; field?: string; row?: number };
 type PreviewRow = {
   row: number;
@@ -47,6 +48,18 @@ const defaults: Record<(typeof fields)[number], string> = {
   description: 'description',
 };
 const labels = {
+  en: {
+    date: 'Date',
+    type: 'Type',
+    security: 'Security',
+    quantity: 'Quantity',
+    unitPrice: 'Amount / unit price',
+    fees: 'Fees',
+    taxes: 'Taxes',
+    currency: 'Currency',
+    externalReference: 'External reference',
+    description: 'Description',
+  },
   fr: {
     date: 'Date',
     type: 'Type',
@@ -72,16 +85,110 @@ const labels = {
     description: 'الوصف',
   },
 };
+const copy = {
+  en: {
+    previewing: 'Creating preview…',
+    confirming: 'Confirming…',
+    confirmed: 'Import confirmed',
+    confirmedCount: (n: number) => `${n} transaction(s) recorded successfully.`,
+    portfolioBack: 'View portfolio',
+    virtualLabel: 'Simulation',
+    realLabel: 'Real tracking',
+    history: 'Transaction history',
+    mappingTitle: 'File and column mapping',
+    portfolio: 'Portfolio',
+    sourceFile: 'Original CSV file',
+    createPreview: 'Create saved preview',
+    replaceDraft: 'Replace unconfirmed import',
+    immutableConfirmed:
+      'Confirmed transactions must be corrected through the reversal/replacement workflow.',
+    previewTitle: 'Import preview',
+    file: 'File',
+    id: 'Identifier',
+    typeSummary: 'Type summary',
+    effects: 'Expected effects',
+    row: 'Row',
+    data: 'Data',
+    result: 'Result',
+    valid: 'Valid',
+    canConfirm: 'The preview can be confirmed.',
+    fixErrors: 'Correct the errors before confirming.',
+    back: 'Back to mapping',
+    confirmBusy: 'Confirming…',
+    confirmAll: 'Confirm all transactions',
+  },
+  fr: {
+    previewing: 'Création de la prévisualisation…',
+    confirming: 'Confirmation en cours…',
+    confirmed: 'Import confirmé',
+    confirmedCount: (n: number) => `${n} opération(s) enregistrée(s) avec succès.`,
+    portfolioBack: 'Voir le portefeuille',
+    virtualLabel: 'Simulation',
+    realLabel: 'Suivi réel',
+    history: 'Historique des opérations',
+    mappingTitle: 'Fichier et correspondance des colonnes',
+    portfolio: 'Portefeuille',
+    sourceFile: 'Fichier CSV original',
+    createPreview: 'Créer la prévisualisation',
+    replaceDraft: 'Remplacer l’import non confirmé',
+    immutableConfirmed:
+      'Les opérations confirmées doivent être corrigées par le flux d’annulation/remplacement.',
+    previewTitle: 'Prévisualisation de l’import',
+    file: 'Fichier',
+    id: 'Identifiant',
+    typeSummary: 'Résumé par type',
+    effects: 'Effets attendus',
+    row: 'Ligne',
+    data: 'Données',
+    result: 'Résultat',
+    valid: 'Valide',
+    canConfirm: 'La prévisualisation peut être confirmée.',
+    fixErrors: 'Corrigez les erreurs avant de confirmer.',
+    back: 'Retour au mapping',
+    confirmBusy: 'Confirmation…',
+    confirmAll: 'Confirmer toutes les opérations',
+  },
+  ar: {
+    previewing: 'جارٍ إنشاء المعاينة…',
+    confirming: 'جارٍ التأكيد…',
+    confirmed: 'تم تأكيد الاستيراد',
+    confirmedCount: (n: number) => `تم تسجيل ${n} عملية بنجاح.`,
+    portfolioBack: 'العودة إلى المحفظة',
+    virtualLabel: 'محاكاة',
+    realLabel: 'تتبع حقيقي',
+    history: 'سجل العمليات',
+    mappingTitle: 'الملف وتعيين الأعمدة',
+    portfolio: 'المحفظة',
+    sourceFile: 'ملف CSV الأصلي',
+    createPreview: 'إنشاء معاينة محفوظة',
+    replaceDraft: 'استبدال الاستيراد غير المؤكد',
+    immutableConfirmed: 'يجب تصحيح العمليات المؤكدة بواسطة مسار العكس والاستبدال.',
+    previewTitle: 'معاينة الاستيراد',
+    file: 'الملف',
+    id: 'المعرف',
+    typeSummary: 'ملخص الأنواع',
+    effects: 'الآثار المتوقعة',
+    row: 'السطر',
+    data: 'البيانات',
+    result: 'النتيجة',
+    valid: 'صالح',
+    canConfirm: 'المعاينة مؤهلة للتأكيد.',
+    fixErrors: 'يجب تصحيح الأخطاء قبل التأكيد.',
+    back: 'العودة إلى التعيين',
+    confirmBusy: 'جارٍ التأكيد…',
+    confirmAll: 'تأكيد جميع العمليات',
+  },
+};
 const safeCell = (value: string) => (/^[=+@-]/.test(value) ? `'${value}` : value);
 
 export function ImportWorkflow({
   locale,
   portfolios,
 }: {
-  locale: 'fr' | 'ar';
+  locale: Locale;
   portfolios: Portfolio[];
 }) {
-  const ar = locale === 'ar';
+  const t = copy[locale];
   const [file, setFile] = useState<File>();
   const [headers, setHeaders] = useState<string[]>([]);
   const [mapping, setMapping] = useState(defaults);
@@ -91,6 +198,7 @@ export function ImportWorkflow({
   const [confirmedCount, setConfirmedCount] = useState<number>();
   const statusRef = useRef<HTMLDivElement>(null);
   const focusStatus = () => queueMicrotask(() => statusRef.current?.focus());
+
   const chooseFile = async (selected?: File) => {
     setFile(selected);
     setPreview(undefined);
@@ -150,6 +258,7 @@ export function ImportWorkflow({
     setFailure(undefined);
     await generate(existing.id);
   };
+
   return (
     <div className="import-flow">
       <div
@@ -160,50 +269,46 @@ export function ImportWorkflow({
         className="status-message"
       >
         {busy === 'preview'
-          ? ar
-            ? 'جارٍ إنشاء المعاينة…'
-            : 'Création de la prévisualisation…'
+          ? t.previewing
           : busy === 'confirm'
-            ? ar
-              ? 'جارٍ التأكيد…'
-              : 'Confirmation en cours…'
+            ? t.confirming
             : (failure?.message ?? '')}
       </div>
       {confirmedCount !== undefined ? (
         <section className="success-panel" role="status">
-          <h2>{ar ? 'تم تأكيد الاستيراد' : 'Import confirmé'}</h2>
-          <p>
-            {ar
-              ? `تم تسجيل ${confirmedCount} عملية بنجاح.`
-              : `${confirmedCount} opération(s) enregistrée(s) avec succès.`}
-          </p>
+          <h2>{t.confirmed}</h2>
+          <p>{t.confirmedCount(confirmedCount)}</p>
           <div className="actions">
-            <a className="button" href={`/${locale}/dashboard`}>
-              {ar ? 'العودة إلى المحفظة' : 'Voir le portefeuille'}
+            <a
+              className="button"
+              href={`/${locale}/dashboard${preview?.portfolioId ? `?portfolio=${preview.portfolioId}` : ''}`}
+            >
+              {t.portfolioBack}
             </a>
-            <a className="button secondary" href={`/${locale}/dashboard#transactions`}>
-              {ar ? 'سجل العمليات' : 'Historique des opérations'}
+            <a
+              className="button secondary"
+              href={`/${locale}/transactions${preview?.portfolioId ? `?portfolio=${preview.portfolioId}` : ''}`}
+            >
+              {t.history}
             </a>
           </div>
         </section>
       ) : !preview ? (
         <section aria-labelledby="mapping-title">
-          <h2 id="mapping-title">
-            {ar ? 'الملف وتعيين الأعمدة' : 'Fichier et correspondance des colonnes'}
-          </h2>
+          <h2 id="mapping-title">{t.mappingTitle}</h2>
           <div className="form">
             <label>
-              {ar ? 'المحفظة' : 'Portefeuille'}
+              {t.portfolio}
               <select id="import-portfolio" disabled={Boolean(busy)}>
                 {portfolios.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.name}
+                    {p.name} · {p.tracking_mode === 'virtual' ? t.virtualLabel : t.realLabel}
                   </option>
                 ))}
               </select>
             </label>
             <label>
-              {ar ? 'ملف CSV الأصلي' : 'Fichier CSV original'}
+              {t.sourceFile}
               <input
                 type="file"
                 accept=".csv,text/csv"
@@ -235,7 +340,7 @@ export function ImportWorkflow({
               disabled={!file || Boolean(busy)}
               onClick={() => void generate()}
             >
-              {ar ? 'إنشاء معاينة محفوظة' : 'Créer la prévisualisation'}
+              {t.createPreview}
             </button>
           </div>
           {failure?.existingImport ? (
@@ -248,28 +353,24 @@ export function ImportWorkflow({
                   disabled={Boolean(busy)}
                   onClick={() => void supersede()}
                 >
-                  {ar ? 'استبدال الاستيراد غير المؤكد' : 'Remplacer l’import non confirmé'}
+                  {t.replaceDraft}
                 </button>
               ) : (
-                <p>
-                  {ar
-                    ? 'يجب تصحيح العمليات المؤكدة لاحقاً بواسطة العكس والاستبدال.'
-                    : 'Les opérations confirmées devront être corrigées par le futur flux d’annulation/remplacement.'}
-                </p>
+                <p>{t.immutableConfirmed}</p>
               )}
             </div>
           ) : null}
         </section>
       ) : (
         <section aria-labelledby="preview-title">
-          <h2 id="preview-title">{ar ? 'معاينة الاستيراد' : 'Prévisualisation de l’import'}</h2>
+          <h2 id="preview-title">{t.previewTitle}</h2>
           <dl className="summary-grid">
             <div>
-              <dt>{ar ? 'الملف' : 'Fichier'}</dt>
+              <dt>{t.file}</dt>
               <dd>{safeCell(preview.filename)}</dd>
             </div>
             <div>
-              <dt>{ar ? 'المعرف' : 'Identifiant'}</dt>
+              <dt>{t.id}</dt>
               <dd className="technical" dir="ltr">
                 {preview.hash.slice(0, 12)}…
               </dd>
@@ -288,14 +389,14 @@ export function ImportWorkflow({
               </div>
             ))}
           </dl>
-          <h3>{ar ? 'ملخص الأنواع' : 'Résumé par type'}</h3>
+          <h3>{t.typeSummary}</h3>
           <p>
             {Object.entries(preview.typeSummary)
               .filter(([, n]) => n)
               .map(([type, n]) => `${type}: ${n}`)
               .join(' · ') || '—'}
           </p>
-          <h3>{ar ? 'الآثار المتوقعة' : 'Effets attendus'}</h3>
+          <h3>{t.effects}</h3>
           <ul>
             {preview.expectedEffects.map((effect) => (
               <li key={effect.row}>
@@ -310,9 +411,9 @@ export function ImportWorkflow({
             <table className="table">
               <thead>
                 <tr>
-                  <th>{ar ? 'السطر' : 'Ligne'}</th>
-                  <th>{ar ? 'البيانات' : 'Données'}</th>
-                  <th>{ar ? 'النتيجة' : 'Résultat'}</th>
+                  <th>{t.row}</th>
+                  <th>{t.data}</th>
+                  <th>{t.result}</th>
                 </tr>
               </thead>
               <tbody>
@@ -340,7 +441,7 @@ export function ImportWorkflow({
                           {message.message}
                         </p>
                       ))}
-                      {!row.errors.length && !row.warnings.length ? (ar ? 'صالح' : 'Valide') : null}
+                      {!row.errors.length && !row.warnings.length ? t.valid : null}
                     </td>
                   </tr>
                 ))}
@@ -348,13 +449,7 @@ export function ImportWorkflow({
             </table>
           </div>
           <p className={preview.canConfirm ? 'success-text' : 'error-text'}>
-            {preview.canConfirm
-              ? ar
-                ? 'المعاينة مؤهلة للتأكيد.'
-                : 'La prévisualisation peut être confirmée.'
-              : ar
-                ? 'يجب تصحيح الأخطاء قبل التأكيد.'
-                : 'Corrigez les erreurs avant de confirmer.'}
+            {preview.canConfirm ? t.canConfirm : t.fixErrors}
           </p>
           {failure ? (
             <p className="error-text" role="alert">
@@ -371,7 +466,7 @@ export function ImportWorkflow({
                 setFailure(undefined);
               }}
             >
-              {ar ? 'العودة إلى التعيين' : 'Retour au mapping'}
+              {t.back}
             </button>
             <button
               type="button"
@@ -380,13 +475,7 @@ export function ImportWorkflow({
               aria-disabled={!preview.canConfirm || Boolean(busy)}
               onClick={() => void confirm()}
             >
-              {busy === 'confirm'
-                ? ar
-                  ? 'جارٍ التأكيد…'
-                  : 'Confirmation…'
-                : ar
-                  ? 'تأكيد جميع العمليات'
-                  : 'Confirmer toutes les opérations'}
+              {busy === 'confirm' ? t.confirmBusy : t.confirmAll}
             </button>
           </div>
         </section>

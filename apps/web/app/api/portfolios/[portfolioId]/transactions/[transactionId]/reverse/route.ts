@@ -30,7 +30,12 @@ export async function POST(
   const body: unknown = await request.json().catch(() => null);
   const parsed = reversalInputSchema.safeParse(body);
   const locale =
-    body && typeof body === 'object' && 'locale' in body && body.locale === 'ar' ? 'ar' : 'fr';
+    body &&
+    typeof body === 'object' &&
+    'locale' in body &&
+    (body.locale === 'en' || body.locale === 'ar')
+      ? body.locale
+      : 'fr';
   const supabase = await createClient();
   const {
     data: { user },

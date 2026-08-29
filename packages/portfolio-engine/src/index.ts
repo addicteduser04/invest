@@ -32,6 +32,8 @@ export interface LedgerResult {
   cash: DecimalString;
   positions: Position[];
   realizedGain: DecimalString;
+  netDividendIncome: DecimalString;
+  standaloneExpenses: DecimalString;
   transactionCount: number;
   lastTransactionId: string | null;
   lastTransactionRecordedAt: string | null;
@@ -58,6 +60,8 @@ export function calculateLedger(
   options: { asOfDate?: string; asOf?: string } = {},
 ): LedgerResult {
   let cash = new Decimal(0);
+  let netDividendIncome = new Decimal(0);
+  let standaloneExpenses = new Decimal(0);
   const positions = new Map<
     string,
     { quantity: Decimal; costBasis: Decimal; realizedGain: Decimal }
@@ -72,6 +76,8 @@ export function calculateLedger(
       quantity: Decimal;
       costBasis: Decimal;
       realizedGain: Decimal;
+      netDividendIncome: Decimal;
+      standaloneExpenses: Decimal;
     }
   >();
   const effectiveAt = (transaction: Transaction) =>
@@ -111,6 +117,8 @@ export function calculateLedger(
       const original = effects.get(tx.reversesTransactionId);
       if (!original) throw new Error(`Reversal precedes original transaction: ${tx.id}`);
       cash = cash.minus(original.cash);
+      netDividendIncome = netDividendIncome.minus(original.netDividendIncome);
+      standaloneExpenses = standaloneExpenses.minus(original.standaloneExpenses);
       if (original.securityId) {
         const current = positions.get(original.securityId);
         if (!current) throw new Error(`Missing position for reversal ${tx.id}`);
@@ -127,6 +135,8 @@ export function calculateLedger(
         quantity: original.quantity.negated(),
         costBasis: original.costBasis.negated(),
         realizedGain: original.realizedGain.negated(),
+        netDividendIncome: original.netDividendIncome.negated(),
+        standaloneExpenses: original.standaloneExpenses.negated(),
       });
       if (cash.lt(0)) throw new Error(`Negative cash after transaction ${tx.id}`);
       continue;
@@ -136,6 +146,8 @@ export function calculateLedger(
     let quantityEffect = new Decimal(0);
     let costBasisEffect = new Decimal(0);
     let realizedEffect = new Decimal(0);
+    let dividendIncomeEffect = new Decimal(0);
+    let standaloneExpenseEffect = new Decimal(0);
     if (tx.type === 'deposit') {
       if (!tx.amount || d(tx.amount).lte(0)) throw new Error('Deposit must be positive');
       cash = cash.plus(d(tx.amount));
@@ -143,11 +155,17 @@ export function calculateLedger(
     if (tx.type === 'withdrawal' || tx.type === 'fee' || tx.type === 'tax') {
       if (!tx.amount || d(tx.amount).lte(0)) throw new Error('Amount must be positive');
       cash = cash.minus(d(tx.amount));
+      if (tx.type === 'fee' || tx.type === 'tax') {
+        standaloneExpenseEffect = d(tx.amount);
+        standaloneExpenses = standaloneExpenses.plus(standaloneExpenseEffect);
+      }
     }
     if (tx.type === 'dividend') {
       if (!tx.amount || d(tx.amount).lte(0) || taxes.gt(d(tx.amount)))
         throw new Error('Dividend and withholding tax are invalid');
-      cash = cash.plus(d(tx.amount).minus(taxes));
+      dividendIncomeEffect = d(tx.amount).minus(taxes);
+      netDividendIncome = netDividendIncome.plus(dividendIncomeEffect);
+      cash = cash.plus(dividendIncomeEffect);
     }
     if (tx.type === 'buy' || tx.type === 'sell') {
       if (!tx.securityId || !tx.quantity || !tx.unitPrice)
@@ -190,6 +208,8 @@ export function calculateLedger(
       quantity: quantityEffect,
       costBasis: costBasisEffect,
       realizedGain: realizedEffect,
+      netDividendIncome: dividendIncomeEffect,
+      standaloneExpenses: standaloneExpenseEffect,
     });
   }
   const last = ordered.at(-1);
@@ -210,6 +230,8 @@ export function calculateLedger(
         new Decimal(0),
       ),
     ),
+    netDividendIncome: out(netDividendIncome),
+    standaloneExpenses: out(standaloneExpenses),
     transactionCount: ordered.length,
     lastTransactionId: last?.id ?? null,
     lastTransactionRecordedAt: last?.recordedAt ?? null,
@@ -279,5 +301,132 @@ export function valuePortfolioAsOf(
     status,
     missingSecurityIds,
     staleSecurityIds,
+  };
+}
+
+export interface PerformanceValuePoint {
+  date: string;
+  totalValue: DecimalString;
+  /** Net external capital flow effective before this day's closing valuation. Deposits are positive, withdrawals negative. */
+  externalFlow?: DecimalString;
+}
+export interface PerformancePoint extends PerformanceValuePoint {
+  externalFlow: DecimalString;
+  periodReturn: DecimalString | null;
+  cumulativeReturn: DecimalString | null;
+}
+
+/**
+ * Daily close-to-close TWR. External contributions/withdrawals are removed from the ending value.
+ * A non-positive prior value breaks the chain; the top-level TWR is then unavailable rather than misleading.
+ */
+export function calculateTimeWeightedReturn(points: readonly PerformanceValuePoint[]): {
+  twr: DecimalString | null;
+  points: PerformancePoint[];
+} {
+  const ordered = [...points].sort((a, b) => a.date.localeCompare(b.date));
+  let product = new Decimal(1);
+  let broken = false;
+  const result: PerformancePoint[] = [];
+  for (let index = 0; index < ordered.length; index += 1) {
+    const point = ordered[index]!;
+    const flow = d(point.externalFlow);
+    if (index === 0) {
+      result.push({
+        ...point,
+        externalFlow: out(flow),
+        periodReturn: null,
+        cumulativeReturn: null,
+      });
+      continue;
+    }
+    const previous = d(ordered[index - 1]!.totalValue);
+    if (previous.lte(0)) {
+      broken = true;
+      result.push({
+        ...point,
+        externalFlow: out(flow),
+        periodReturn: null,
+        cumulativeReturn: null,
+      });
+      continue;
+    }
+    const periodReturn = d(point.totalValue).minus(flow).div(previous).minus(1);
+    product = product.times(periodReturn.plus(1));
+    result.push({
+      ...point,
+      externalFlow: out(flow),
+      periodReturn: out(periodReturn),
+      cumulativeReturn: broken ? null : out(product.minus(1)),
+    });
+  }
+  return {
+    twr: ordered.length > 1 && !broken ? out(product.minus(1)) : null,
+    points: result,
+  };
+}
+
+export interface DatedCashFlow {
+  date: string;
+  amount: DecimalString;
+}
+
+/** Investor-perspective XIRR. Requires at least one positive and one negative cash flow. */
+export function calculateXirr(cashFlows: readonly DatedCashFlow[]): DecimalString | null {
+  if (cashFlows.length < 2) return null;
+  const flows = [...cashFlows]
+    .map((flow) => ({ ...flow, time: Date.parse(`${flow.date}T00:00:00Z`) }))
+    .sort((a, b) => a.time - b.time);
+  if (flows.some((flow) => !Number.isFinite(flow.time))) throw new Error('Invalid cash-flow date');
+  if (!flows.some((flow) => d(flow.amount).lt(0)) || !flows.some((flow) => d(flow.amount).gt(0)))
+    return null;
+  const start = flows[0]!.time;
+  const npv = (rate: Decimal) => {
+    if (rate.lte(-1)) return new Decimal(Number.POSITIVE_INFINITY);
+    return flows.reduce((sum, flow) => {
+      const years = new Decimal(flow.time - start).div(86_400_000).div('365');
+      const discount = rate.plus(1).pow(years);
+      return sum.plus(d(flow.amount).div(discount));
+    }, new Decimal(0));
+  };
+  let low = new Decimal('-0.9999');
+  let high = new Decimal('1');
+  let lowValue = npv(low);
+  let highValue = npv(high);
+  for (let i = 0; i < 32 && lowValue.times(highValue).gt(0); i += 1) {
+    high = high.times(2).plus(1);
+    highValue = npv(high);
+  }
+  if (lowValue.times(highValue).gt(0)) return null;
+  for (let i = 0; i < 160; i += 1) {
+    const mid = low.plus(high).div(2);
+    const value = npv(mid);
+    if (value.abs().lt('0.000000000001')) return out(mid);
+    if (lowValue.times(value).lte(0)) {
+      high = mid;
+      highValue = value;
+    } else {
+      low = mid;
+      lowValue = value;
+    }
+  }
+  return out(low.plus(high).div(2));
+}
+
+export function valuePosition(
+  position: Position,
+  price: DecimalString,
+  portfolioTotalValue?: DecimalString,
+): {
+  marketValue: DecimalString;
+  unrealizedGain: DecimalString;
+  weightPercent: DecimalString | null;
+} {
+  const marketValue = d(position.quantity).times(d(price));
+  const total = portfolioTotalValue ? d(portfolioTotalValue) : new Decimal(0);
+  return {
+    marketValue: out(marketValue),
+    unrealizedGain: out(marketValue.minus(d(position.costBasis))),
+    weightPercent: total.gt(0) ? out(marketValue.div(total).times(100)) : null,
   };
 }

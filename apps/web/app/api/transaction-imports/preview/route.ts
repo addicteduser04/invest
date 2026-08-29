@@ -22,7 +22,8 @@ const safeCode = (message?: string): ErrorCode => {
 };
 export async function POST(request: Request) {
   const form = await request.formData();
-  const locale = form.get('locale') === 'ar' ? 'ar' : 'fr';
+  const rawLocale = String(form.get('locale') ?? 'fr');
+  const locale = rawLocale === 'en' || rawLocale === 'ar' ? rawLocale : 'fr';
   const supabase = await createClient();
   const {
     data: { user },

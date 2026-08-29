@@ -13,7 +13,7 @@ vi.mock('@/lib/supabase/server', () => ({
 }));
 import { POST as confirm } from './[id]/confirm/route';
 
-const request = (locale: 'fr' | 'ar') =>
+const request = (locale: 'en' | 'fr' | 'ar') =>
   new Request('http://localhost/api/transaction-imports/id/confirm', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -25,13 +25,16 @@ describe('transaction import API boundary', () => {
     state.rpcData = null;
     state.rpcError = null;
   });
-  it.each(['fr', 'ar'] as const)('rejects unauthenticated %s confirmation', async (locale) => {
-    const response = await confirm(request(locale), {
-      params: Promise.resolve({ id: '00000000-0000-4000-8000-000000000001' }),
-    });
-    expect(response.status).toBe(401);
-    expect((await response.json()).code).toBe('UNAUTHENTICATED');
-  });
+  it.each(['en', 'fr', 'ar'] as const)(
+    'rejects unauthenticated %s confirmation',
+    async (locale) => {
+      const response = await confirm(request(locale), {
+        params: Promise.resolve({ id: '00000000-0000-4000-8000-000000000001' }),
+      });
+      expect(response.status).toBe(401);
+      expect((await response.json()).code).toBe('UNAUTHENTICATED');
+    },
+  );
   it('localizes a durable Arabic confirmation failure without exposing database text', async () => {
     state.user = { id: 'user' };
     state.rpcData = { status: 'failed', failureCode: 'INSUFFICIENT_CASH', failedRow: 3 };

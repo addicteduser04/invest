@@ -32,6 +32,14 @@ describe('localized reversal workflow', () => {
     expect(html).toContain('Import source');
   });
 
+  it('renders the English immutable correction workflow', () => {
+    const html = renderToStaticMarkup(
+      createElement(ReversalWorkflow, { locale: 'en', transaction }),
+    );
+    expect(html).toContain('The original transaction remains permanently in history');
+    expect(html).toContain('Detailed reversal reason');
+  });
+
   it('renders Arabic labels while isolating financial values in LTR', () => {
     const html = renderToStaticMarkup(
       createElement(ReversalWorkflow, { locale: 'ar', transaction }),

@@ -14,12 +14,14 @@ export async function POST(request: Request) {
     .eq('role', 'data_admin')
     .maybeSingle();
   if (!role) return Response.json({ error: 'Forbidden' }, { status: 403 });
+
   const form = await request.formData();
   const file = form.get('file');
   if (!(file instanceof File) || file.size > 5_000_000)
     return Response.json({ error: 'A CSV file under 5 MB is required' }, { status: 400 });
+
   const text = await file.text();
-  const preview = await new AdminCsvProvider().preview(text, {
+  const mapping = {
     date: String(form.get('date') || 'time'),
     ticker: String(form.get('ticker') || 'symbol'),
     close: String(form.get('close') || 'close'),
@@ -27,15 +29,37 @@ export async function POST(request: Request) {
     high: 'high',
     low: 'low',
     volume: 'volume',
+  };
+  const preview = await new AdminCsvProvider().preview(text, mapping);
+  if (preview.errors.length) {
+    return Response.json(
+      {
+        ...preview,
+        originalFileName: file.name,
+        publicationStatus: 'validation_failed',
+        notice: 'Validation failed. Nothing was persisted or published.',
+      },
+      { status: 422 },
+    );
+  }
+
+  const { data: runId, error } = await supabase.rpc('propose_market_price_import', {
+    p_source_hash: preview.sourceHash,
+    p_original_filename: file.name,
+    p_mapping: mapping,
+    p_validation_report: { errors: preview.errors, warnings: preview.warnings },
+    p_source_text: text,
+    p_candidates: preview.candidates,
   });
-  return Response.json(
-    {
-      ...preview,
-      originalFileName: file.name,
-      publicationStatus: 'preview_only',
-      notice:
-        'A distinct data administrator must approve this immutable upload before publication.',
-    },
-    { status: preview.errors.length ? 422 : 200 },
-  );
+  if (error) {
+    const status = error.message === 'DUPLICATE_IMPORT' ? 409 : 400;
+    return Response.json({ error: error.message }, { status });
+  }
+  return Response.json({
+    ...preview,
+    ingestionRunId: runId,
+    originalFileName: file.name,
+    publicationStatus: 'awaiting_second_admin',
+    notice: 'Persisted privately. A distinct data administrator must approve before publication.',
+  });
 }

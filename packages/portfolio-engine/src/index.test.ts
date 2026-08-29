@@ -27,6 +27,8 @@ describe('golden first vertical slice', () => {
       },
     ]);
     expect(ledger.cash).toBe('85437.25');
+    expect(ledger.netDividendIncome).toBe('0');
+    expect(ledger.standaloneExpenses).toBe('0');
     expect(ledger.positions[0]).toEqual({
       securityId: 'IAM',
       quantity: '150',
@@ -112,6 +114,8 @@ describe('Sprint 2 accounting rules', () => {
         },
       ],
       realizedGain: '92.5',
+      netDividendIncome: '27',
+      standaloneExpenses: '3',
       transactionCount: 8,
       lastTransactionId: '08',
       lastTransactionRecordedAt: null,
@@ -307,5 +311,62 @@ describe('Sprint 2 accounting rules', () => {
         },
       ]),
     ).toThrow('reversed more than once');
+  });
+});
+
+describe('MVP performance analytics', () => {
+  it('calculates TWR without treating capital contributions as investment return', async () => {
+    const { calculateTimeWeightedReturn } = await import('./index');
+    const result = calculateTimeWeightedReturn([
+      { date: '2026-01-01', totalValue: '100', externalFlow: '100' },
+      { date: '2026-01-02', totalValue: '110', externalFlow: '0' },
+      { date: '2026-01-03', totalValue: '220', externalFlow: '100' },
+    ]);
+    expect(result.points[1]?.periodReturn).toBe('0.1');
+    expect(result.points[2]?.periodReturn).toBe('0.090909090909090909090909090909090909091');
+    expect(result.twr).toBe('0.2');
+  });
+
+  it('returns an annualized XIRR for dated investor cash flows', async () => {
+    const { calculateXirr } = await import('./index');
+    const result = calculateXirr([
+      { date: '2026-01-01', amount: '-100' },
+      { date: '2027-01-01', amount: '110' },
+    ]);
+    expect(result).not.toBeNull();
+    expect(Number(result)).toBeCloseTo(0.1, 8);
+  });
+});
+
+describe('MVP income and expense attribution', () => {
+  it('tracks net dividends and standalone expenses and reverses them at correction time', () => {
+    const history = [
+      { id: 'd', type: 'deposit' as const, settlementDate: '2026-01-01', amount: '100' },
+      {
+        id: 'div',
+        type: 'dividend' as const,
+        settlementDate: '2026-01-02',
+        amount: '20',
+        taxes: '3',
+      },
+      { id: 'fee', type: 'fee' as const, settlementDate: '2026-01-03', amount: '2' },
+    ];
+    expect(calculateLedger(history)).toMatchObject({
+      cash: '115',
+      netDividendIncome: '17',
+      standaloneExpenses: '2',
+    });
+    expect(
+      calculateLedger([
+        ...history,
+        {
+          id: 'reverse-div',
+          type: 'reversal' as const,
+          settlementDate: '2026-01-10',
+          reversesTransactionId: 'div',
+          effectiveAt: '2026-01-10T12:00:00.000Z',
+        },
+      ]),
+    ).toMatchObject({ cash: '98', netDividendIncome: '0', standaloneExpenses: '2' });
   });
 });
