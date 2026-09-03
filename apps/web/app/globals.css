@@ -1400,6 +1400,9 @@ body {
   display: grid;
   gap: 32px;
 }
+.compare-v2-panel > * {
+  min-width: 0;
+}
 .compare-v2-chart-shell {
   border-radius: 10px;
   padding: 22px;

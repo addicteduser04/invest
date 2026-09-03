@@ -10,34 +10,69 @@ It is **not a brokerage or custodian**. Real portfolios record transactions alre
 - French
 - Arabic (RTL)
 
-## Core MVP
+## Final MVP scope
 
-- Supabase authentication, profile and owner-isolated portfolios.
-- Real-tracking and virtual portfolio modes.
-- Immutable transaction ledger: cash contributions/withdrawals, recorded buys/sells, dividends, fees and taxes.
-- Atomic CSV transaction import, immutable reversal and optional replacement.
-- Weighted-average-cost accounting and deterministic historical replay.
+- Supabase authentication, profile management, password recovery, and owner-isolated portfolios.
+- Explicit real-tracking and virtual/simulation portfolio modes.
+- Immutable transaction ledger for cash contributions/withdrawals, recorded buys/sells, dividends, fees, and taxes.
+- Atomic CSV transaction import, immutable reversal, and optional replacement.
+- Weighted-average-cost accounting and deterministic historical replay with exact-decimal financial arithmetic.
 - Derived portfolio-state snapshots with safe worker locking/retries.
-- Exact-decimal current valuation and P&L from published/provisional market prices.
-- Historical TWR/XIRR performance endpoints with explicit unavailable states.
-- Market directory, security detail and price history with a TradingView Lightweight Charts surface.
-- Basic concentration/sector allocation and deterministic portfolio insights.
-- Private administrator CSV market-price ingestion with second-admin publication.
-- Disabled-by-default BVC public historical testing export for private/staging validation only; it never publishes automatically.
+- Current valuation with cash, holdings, market value, realized/unrealized/total P&L, dividend income, and explicit missing/stale-price states.
+- Historical TWR/XIRR performance with 1M, 3M, YTD, 1Y, 3Y, and since-inception periods.
+- MASI price-index benchmark support when trusted/private-test MASI history exists, with an explicit price-index (not total-return) disclaimer.
+- Concentration, sector allocation, volatility/drawdown presentation when sufficient data exists, and deterministic portfolio insights.
+- Moroccan market directory and security pages with OHLCV history and TradingView Lightweight Charts.
+- MASI-family market overview support (MASI, MASI 20, MASI ESG, MASI Mid and Small Cap) when index data exists.
+- Private administrator market-price staging with distinct second-admin publication.
+- Disabled-by-default BVC public testing connectors for security master, historical equities, and MASI-family indices.
+- Optional AI portfolio explanation provider with a deterministic fallback when the external provider is unavailable.
+- Health endpoint at `/api/health` for web/database reachability checks.
 
-Market/fundamental data that is not actually available is shown as unavailable. The application does not invent PER, ROE, market capitalization, dividends, MASI performance, or other market facts.
+Market/fundamental data that is not actually available is shown as unavailable. The application does not invent PER, ROE, EPS, dividends, market capitalization, benchmark history, or other market facts.
 
 ## Local setup
 
 Requires Node 22+, pnpm, Docker, and the Supabase CLI for live database integration tests.
 
 ```bash
-cp .env.example .env.local
-pnpm install
+pnpm install --frozen-lockfile
+supabase start
+```
+
+The Next.js app is executed from `apps/web`, so start from its app-specific example and keep the resulting file untracked:
+
+```bash
+cp apps/web/.env.example apps/web/.env.local
+```
+
+Then set `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` from the local value printed by `supabase status`. For private BVC testing only, set `BVC_PUBLIC_TESTING_ENABLED=true`.
+
+For web-only development:
+
+```bash
+pnpm dev:web
+```
+
+The root `pnpm dev` also starts the worker and therefore additionally requires the local worker variables documented in `.env.example`.
+
+Never commit environment secrets.
+
+## Validation
+
+The final local acceptance sequence is:
+
+```bash
+pnpm --filter @bvc/market-data test
+pnpm --filter @bvc/web test
+pnpm typecheck
+pnpm check:migrations
+supabase db reset
+pnpm test:database
 pnpm check
 ```
 
-Never commit environment secrets.
+See `docs/FINAL_MVP_RUNBOOK.md` for the complete local bootstrap, private BVC testing flow, and deployment checklist.
 
 ## Accounting source of truth
 
@@ -47,10 +82,17 @@ Never commit environment secrets.
 
 ## Market data
 
-Raw market ingestion/admin relations remain private. Public-safe views expose only normalized security metadata and published/provisional price history. Administrator CSV publication requires a distinct second `data_admin`.
+Raw market ingestion/admin relations remain private. Public-safe views expose only normalized security metadata and published/provisional price history. Administrator price publication requires a distinct second `data_admin`.
 
-Public production launch still requires appropriate rights for any exchange price, historical, fundamental, or benchmark series shown to users. The BVC public testing adapter is intentionally gated by `BVC_PUBLIC_TESTING_ENABLED=true` and is not a substitute for redistribution rights.
+For private development/staging, the BVC testing tools can:
 
-Published market-price rows can preserve OHLCV fields for interactive security charts. The charting layer uses TradingView Lightweight Charts while SaifInvest remains responsible for its own normalized market data. See `docs/BVC_PUBLIC_TESTING.md`.
+- preview and apply the BVC security master to the private test database;
+- preview and apply MASI-family index master/history to the private test database;
+- fetch a single bounded equity-history window or up to roughly three years through bounded sequential windows;
+- stage normalized BVC equity price history into the existing two-admin review/publication workflow.
 
-See `docs/MVP_STATUS.md` for the current handoff status and remaining post-MVP work.
+Public production launch still requires appropriate rights for any exchange price, historical, fundamental, or benchmark series shown to users. `BVC_PUBLIC_TESTING_ENABLED=true` is a private testing mechanism, **not** a redistribution licence.
+
+Published market-price rows preserve OHLCV fields for interactive security charts. The charting layer uses TradingView Lightweight Charts while SaifInvest remains responsible for its normalized market data.
+
+See `docs/BVC_PUBLIC_TESTING.md` and `docs/MVP_STATUS.md`.
