@@ -24,8 +24,23 @@ type BvcPreviewResponse = {
   warnings?: string[];
   error?: string;
   notice?: string;
+  status?: 'preview' | 'staged' | 'applied' | 'validation_failed';
+  ingestionRunId?: string;
+  result?: { updatedRows?: number };
   candidates?: unknown[];
   snapshots?: unknown[];
+};
+
+type BvcPriceRequest = {
+  instrument: string;
+  startDate: string;
+  endDate: string;
+  extended: boolean;
+};
+
+type BvcReferenceRequest = {
+  endpoint: '/api/admin/imports/bvc/security-master' | '/api/admin/imports/bvc/indices';
+  body: Record<string, unknown>;
 };
 
 const copy = {
@@ -52,6 +67,9 @@ const copy = {
     endDate: 'End date',
     fetchBvc: 'Fetch testing CSV',
     download: 'Download normalized CSV',
+    stageReview: 'Stage for second-admin review',
+    applyPrivate: 'Apply to private test data',
+    extendedRange: 'Fetch up to 3 years in bounded windows',
     bvcDisabled:
       'Enable BVC_PUBLIC_TESTING_ENABLED=true only in a private testing environment to use this tool.',
     bvcReady: 'BVC testing export ready',
@@ -85,6 +103,9 @@ const copy = {
     endDate: 'Date de fin',
     fetchBvc: 'Récupérer le CSV de test',
     download: 'Télécharger le CSV normalisé',
+    stageReview: 'Préparer pour validation par un second admin',
+    applyPrivate: 'Appliquer aux données de test privées',
+    extendedRange: 'Récupérer jusqu’à 3 ans par fenêtres limitées',
     bvcDisabled:
       'Activez BVC_PUBLIC_TESTING_ENABLED=true uniquement dans un environnement de test privé pour utiliser cet outil.',
     bvcReady: 'Export BVC de test prêt',
@@ -118,6 +139,9 @@ const copy = {
     endDate: 'تاريخ النهاية',
     fetchBvc: 'جلب CSV للاختبار',
     download: 'تنزيل CSV الموحّد',
+    stageReview: 'إرسال للمراجعة من مسؤول ثانٍ',
+    applyPrivate: 'تطبيق على بيانات الاختبار الخاصة',
+    extendedRange: 'جلب ما يصل إلى 3 سنوات ضمن نوافذ محدودة',
     bvcDisabled:
       'فعّل BVC_PUBLIC_TESTING_ENABLED=true فقط في بيئة اختبار خاصة لاستخدام هذه الأداة.',
     bvcReady: 'تصدير BVC الاختباري جاهز',
@@ -152,7 +176,9 @@ export function AdminMarketImport({
   const [busy, setBusy] = useState(false);
   const [bvcBusy, setBvcBusy] = useState(false);
   const [bvcResult, setBvcResult] = useState<BvcPreviewResponse | null>(null);
+  const [bvcRequest, setBvcRequest] = useState<BvcPriceRequest | null>(null);
   const [bvcReferenceResult, setBvcReferenceResult] = useState<BvcPreviewResponse | null>(null);
+  const [bvcReferenceRequest, setBvcReferenceRequest] = useState<BvcReferenceRequest | null>(null);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -187,14 +213,17 @@ export function AdminMarketImport({
     setBvcResult(null);
     const form = new FormData(event.currentTarget);
     try {
+      const requestBody: BvcPriceRequest = {
+        instrument: String(form.get('instrument') ?? ''),
+        startDate: String(form.get('startDate') ?? ''),
+        endDate: String(form.get('endDate') ?? ''),
+        extended: form.get('extended') === '1',
+      };
+      setBvcRequest(requestBody);
       const response = await fetch('/api/admin/imports/bvc', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          instrument: String(form.get('instrument') ?? ''),
-          startDate: String(form.get('startDate') ?? ''),
-          endDate: String(form.get('endDate') ?? ''),
-        }),
+        body: JSON.stringify(requestBody),
       });
       const body = (await response.json()) as BvcPreviewResponse;
       setBvcResult(body);
@@ -212,11 +241,13 @@ export function AdminMarketImport({
     if (!bvcTestingEnabled) return;
     setBvcBusy(true);
     setBvcReferenceResult(null);
+    const requestBody = body ?? {};
+    setBvcReferenceRequest({ endpoint, body: requestBody });
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body ?? {}),
+        body: JSON.stringify(requestBody),
       });
       setBvcReferenceResult((await response.json()) as BvcPreviewResponse);
     } catch {
@@ -234,6 +265,40 @@ export function AdminMarketImport({
       code: String(form.get('code') ?? 'MASI'),
       period: String(form.get('period') ?? '1m'),
     });
+  };
+
+  const stageBvcPrices = async () => {
+    if (!bvcRequest || bvcBusy) return;
+    setBvcBusy(true);
+    try {
+      const response = await fetch('/api/admin/imports/bvc', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...bvcRequest, action: 'stage' }),
+      });
+      setBvcResult((await response.json()) as BvcPreviewResponse);
+    } catch {
+      setBvcResult({ error: 'BVC_FETCH_FAILED' });
+    } finally {
+      setBvcBusy(false);
+    }
+  };
+
+  const applyBvcReference = async () => {
+    if (!bvcReferenceRequest || bvcBusy) return;
+    setBvcBusy(true);
+    try {
+      const response = await fetch(bvcReferenceRequest.endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...bvcReferenceRequest.body, action: 'apply' }),
+      });
+      setBvcReferenceResult((await response.json()) as BvcPreviewResponse);
+    } catch {
+      setBvcReferenceResult({ error: 'BVC_FETCH_FAILED' });
+    } finally {
+      setBvcBusy(false);
+    }
   };
 
   const downloadBvcCsv = () => {
@@ -326,6 +391,10 @@ export function AdminMarketImport({
                 <input name="endDate" type="date" defaultValue={isoDaysAgo(0)} required dir="ltr" />
               </label>
             </div>
+            <label className="data-availability-check">
+              <input type="checkbox" name="extended" value="1" />
+              <span>{t.extendedRange}</span>
+            </label>
             <button className="button secondary" disabled={bvcBusy}>
               {t.fetchBvc}
             </button>
@@ -354,14 +423,32 @@ export function AdminMarketImport({
                     ))}
                   </ul>
                 ) : null}
-                <button
-                  type="button"
-                  className="button compact"
-                  disabled={!bvcResult.csv}
-                  onClick={downloadBvcCsv}
-                >
-                  {t.download}
-                </button>
+                {bvcResult.notice ? <p className="microcopy">{bvcResult.notice}</p> : null}
+                {bvcResult.ingestionRunId ? (
+                  <small className="technical" dir="ltr">
+                    {bvcResult.ingestionRunId}
+                  </small>
+                ) : null}
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="button compact"
+                    disabled={!bvcResult.csv}
+                    onClick={downloadBvcCsv}
+                  >
+                    {t.download}
+                  </button>
+                  {bvcResult.status === 'preview' && bvcResult.rowCount ? (
+                    <button
+                      type="button"
+                      className="button compact secondary"
+                      disabled={bvcBusy}
+                      onClick={() => void stageBvcPrices()}
+                    >
+                      {t.stageReview}
+                    </button>
+                  ) : null}
+                </div>
               </>
             )}
           </div>
@@ -454,27 +541,41 @@ export function AdminMarketImport({
                     ))}
                   </ul>
                 ) : null}
-                {bvcReferenceResult.csv ? (
-                  <button
-                    type="button"
-                    className="button compact"
-                    onClick={() => {
-                      const blob = new Blob([bvcReferenceResult.csv ?? ''], {
-                        type: 'text/csv;charset=utf-8',
-                      });
-                      const url = URL.createObjectURL(blob);
-                      const anchor = document.createElement('a');
-                      anchor.href = url;
-                      anchor.download = bvcReferenceResult.filename ?? 'bvc-public-test.csv';
-                      document.body.append(anchor);
-                      anchor.click();
-                      anchor.remove();
-                      URL.revokeObjectURL(url);
-                    }}
-                  >
-                    {t.download}
-                  </button>
-                ) : null}
+                <div className="actions">
+                  {bvcReferenceResult.csv ? (
+                    <button
+                      type="button"
+                      className="button compact"
+                      onClick={() => {
+                        const blob = new Blob([bvcReferenceResult.csv ?? ''], {
+                          type: 'text/csv;charset=utf-8',
+                        });
+                        const url = URL.createObjectURL(blob);
+                        const anchor = document.createElement('a');
+                        anchor.href = url;
+                        anchor.download = bvcReferenceResult.filename ?? 'bvc-public-test.csv';
+                        document.body.append(anchor);
+                        anchor.click();
+                        anchor.remove();
+                        URL.revokeObjectURL(url);
+                      }}
+                    >
+                      {t.download}
+                    </button>
+                  ) : null}
+                  {bvcReferenceResult.status === 'preview' &&
+                  bvcReferenceRequest?.body.mode !== 'latest' &&
+                  (bvcReferenceResult.rowCount ?? 0) > 0 ? (
+                    <button
+                      type="button"
+                      className="button compact secondary"
+                      disabled={bvcBusy}
+                      onClick={() => void applyBvcReference()}
+                    >
+                      {t.applyPrivate}
+                    </button>
+                  ) : null}
+                </div>
               </>
             )}
           </div>

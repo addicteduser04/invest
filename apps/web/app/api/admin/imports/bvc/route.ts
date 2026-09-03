@@ -1,4 +1,4 @@
-import { fetchBvcHistoricalPreview } from '@bvc/market-data';
+import { fetchBvcHistoricalPreview, fetchBvcHistoricalRangePreview } from '@bvc/market-data';
 import { createClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -31,30 +31,74 @@ export async function POST(request: Request) {
   }
   if (!body || typeof body !== 'object') return jsonError('Invalid request body', 400);
   const input = body as Record<string, unknown>;
+  const action = String(input.action ?? 'preview');
+  if (!['preview', 'stage'].includes(action)) return jsonError('Invalid action', 400);
+
+  const historyInput = {
+    instrument: String(input.instrument ?? ''),
+    startDate: String(input.startDate ?? ''),
+    endDate: String(input.endDate ?? ''),
+    market: input.market === 'terme' ? ('terme' as const) : ('comptant' as const),
+    adjusted: input.adjusted === true,
+  };
 
   try {
-    const preview = await fetchBvcHistoricalPreview({
-      instrument: String(input.instrument ?? ''),
-      startDate: String(input.startDate ?? ''),
-      endDate: String(input.endDate ?? ''),
-      market: input.market === 'terme' ? 'terme' : 'comptant',
-      adjusted: input.adjusted === true,
-    });
+    const extended = input.extended === true;
+    const preview = extended
+      ? await fetchBvcHistoricalRangePreview(historyInput)
+      : await fetchBvcHistoricalPreview(historyInput);
     if (preview.errors.length)
       return Response.json(
         {
           ...preview,
+          status: 'validation_failed',
           notice: 'BVC data was fetched read-only but failed normalization. Nothing was persisted.',
         },
         { status: 422 },
       );
 
+    const filename = `bvc-public-test-${historyInput.instrument.toUpperCase()}-${historyInput.startDate}-${historyInput.endDate}.csv`;
+
+    if (action === 'stage') {
+      const mapping = {
+        date: 'time',
+        ticker: 'symbol',
+        close: 'close',
+        open: 'open',
+        high: 'high',
+        low: 'low',
+        volume: 'volume',
+      };
+      const { data: runId, error } = await supabase.rpc('propose_market_price_import', {
+        p_source_hash: preview.sourceHash,
+        p_original_filename: filename,
+        p_mapping: mapping,
+        p_validation_report: { errors: preview.errors, warnings: preview.warnings },
+        p_source_text: preview.csv,
+        p_candidates: preview.candidates,
+      });
+      if (error) {
+        const status = error.message === 'DUPLICATE_IMPORT' ? 409 : 422;
+        return jsonError(error.message, status);
+      }
+      return Response.json({
+        ...preview,
+        rowCount: preview.candidates.length,
+        filename,
+        ingestionRunId: runId,
+        status: 'staged',
+        notice:
+          'BVC price history was staged privately. A distinct second data administrator must approve it before publication.',
+      });
+    }
+
     return Response.json({
       ...preview,
       rowCount: preview.candidates.length,
-      filename: `bvc-public-test-${String(input.instrument ?? '').toUpperCase()}-${String(input.startDate ?? '')}-${String(input.endDate ?? '')}.csv`,
+      filename,
+      status: 'preview',
       notice:
-        'Read-only testing export only. Nothing was persisted or published. Review the CSV, then use the existing two-admin import workflow in private staging if appropriate.',
+        'Read-only testing preview only. Review the rows, then stage them for the existing two-admin publication workflow.',
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'BVC_FETCH_FAILED';

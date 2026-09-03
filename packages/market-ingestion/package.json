@@ -1,12 +1,9 @@
 {
-  "name": "@bvc/market-data",
+  "name": "@bvc/market-ingestion",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": "./src/index.ts",
-    "./staleness": "./src/staleness.ts"
-  },
+  "exports": "./src/index.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "tsc -p tsconfig.json --noEmit",
@@ -14,11 +11,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "csv-parse": "^6.1.0",
-    "decimal.js": "^10.6.0",
+    "@bvc/market-data": "workspace:*",
+    "pg": "^8.16.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/pg": "^8.15.0",
     "vitest": "^3.2.0"
   }
 }

@@ -8,10 +8,12 @@
     "lint": "tsc -p tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch src/index.ts",
+    "market:daily": "tsx src/daily-ingestion-cli.ts"
   },
   "dependencies": {
     "@bvc/market-data": "workspace:*",
+    "@bvc/market-ingestion": "workspace:*",
     "@bvc/portfolio-engine": "workspace:*",
     "pg": "^8.16.0",
     "zod": "^4.0.0"

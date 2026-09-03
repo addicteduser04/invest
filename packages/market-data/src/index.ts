@@ -3,6 +3,13 @@ import Decimal from 'decimal.js';
 import { parse } from 'csv-parse/sync';
 import { z } from 'zod';
 
+export {
+  computeExpectedLatestMarketDate,
+  isMarketDateStale,
+  DEFAULT_STALENESS_CUTOFF,
+  type StalenessCutoff,
+} from './staleness';
+
 export interface CsvMapping {
   date: string;
   ticker: string;
@@ -203,7 +210,8 @@ export function previewSecurityMasterCsv(input: string): SecurityMasterPreview {
   const errors: string[] = [];
   const warnings: string[] = [];
   const candidates: SecurityMasterCandidate[] = [];
-  const seen = new Set<string>();
+  const seenTickers = new Set<string>();
+  const seenIsins = new Set<string>();
 
   records.forEach((record, index) => {
     const row = index + 2;
@@ -216,6 +224,16 @@ export function previewSecurityMasterCsv(input: string): SecurityMasterPreview {
       .trim()
       .toLowerCase();
     const listedOnRaw = String(record['listed_on'] ?? '').trim();
+    const isinRaw = String(record['isin'] ?? '')
+      .trim()
+      .toUpperCase();
+    const issuerNameRaw = String(record['issuer_name'] ?? '').trim();
+    const instrumentTypeRaw = String(record['instrument_type'] ?? '').trim();
+    const marketSegmentRaw = String(record['market_segment'] ?? '').trim();
+    const shareCountRaw = String(record['share_count'] ?? '')
+      .trim()
+      .replaceAll(' ', '');
+    const sourceIdRaw = String(record['source_id'] ?? '').trim();
 
     if (!/^[A-Z0-9._-]{1,20}$/.test(ticker)) errors.push(`Row ${row}: invalid ticker`);
     if (!name || name.length > 200) errors.push(`Row ${row}: invalid name`);
@@ -224,17 +242,35 @@ export function previewSecurityMasterCsv(input: string): SecurityMasterPreview {
       errors.push(`Row ${row}: invalid listing status`);
     if (listedOnRaw && !isIsoCalendarDate(listedOnRaw))
       errors.push(`Row ${row}: invalid listed_on date`);
-    if (seen.has(ticker)) errors.push(`Row ${row}: duplicate ticker ${ticker}`);
-    seen.add(ticker);
+    if (isinRaw && !/^[A-Z]{2}[A-Z0-9]{10}$/.test(isinRaw)) errors.push(`Row ${row}: invalid ISIN`);
+    if (issuerNameRaw.length > 200) errors.push(`Row ${row}: issuer_name is too long`);
+    if (instrumentTypeRaw.length > 120) errors.push(`Row ${row}: instrument_type is too long`);
+    if (marketSegmentRaw.length > 120) errors.push(`Row ${row}: market_segment is too long`);
+    if (shareCountRaw && !/^\d+$/.test(shareCountRaw))
+      errors.push(`Row ${row}: invalid share_count`);
+    if (sourceIdRaw.length > 160) errors.push(`Row ${row}: source_id is too long`);
+    if (seenTickers.has(ticker)) errors.push(`Row ${row}: duplicate ticker ${ticker}`);
+    seenTickers.add(ticker);
+    if (isinRaw) {
+      if (seenIsins.has(isinRaw)) errors.push(`Row ${row}: duplicate ISIN ${isinRaw}`);
+      seenIsins.add(isinRaw);
+    }
 
-    if (
+    const valid =
       /^[A-Z0-9._-]{1,20}$/.test(ticker) &&
-      name &&
+      Boolean(name) &&
       name.length <= 200 &&
       sectorRaw.length <= 120 &&
       ['pending', 'active', 'suspended', 'delisted'].includes(statusRaw) &&
-      (!listedOnRaw || isIsoCalendarDate(listedOnRaw))
-    ) {
+      (!listedOnRaw || isIsoCalendarDate(listedOnRaw)) &&
+      (!isinRaw || /^[A-Z]{2}[A-Z0-9]{10}$/.test(isinRaw)) &&
+      issuerNameRaw.length <= 200 &&
+      instrumentTypeRaw.length <= 120 &&
+      marketSegmentRaw.length <= 120 &&
+      (!shareCountRaw || /^\d+$/.test(shareCountRaw)) &&
+      sourceIdRaw.length <= 160;
+
+    if (valid) {
       candidates.push({
         row,
         ticker,
@@ -242,6 +278,12 @@ export function previewSecurityMasterCsv(input: string): SecurityMasterPreview {
         sector: sectorRaw || null,
         listingStatus: statusRaw as SecurityMasterCandidate['listingStatus'],
         listedOn: listedOnRaw || null,
+        ...(isinRaw ? { isin: isinRaw } : {}),
+        ...(issuerNameRaw ? { issuerName: issuerNameRaw } : {}),
+        ...(instrumentTypeRaw ? { instrumentType: instrumentTypeRaw } : {}),
+        ...(marketSegmentRaw ? { marketSegment: marketSegmentRaw } : {}),
+        ...(shareCountRaw ? { shareCount: shareCountRaw } : {}),
+        ...(sourceIdRaw ? { sourceId: sourceIdRaw } : {}),
       });
     }
   });
@@ -663,6 +705,85 @@ export async function fetchBvcHistoricalPreview(
   }
 
   return previewBvcHistoricalPayload(payload, instrument, url.toString());
+}
+
+export async function fetchBvcHistoricalRangePreview(
+  input: BvcHistoricalFetchInput,
+  fetchImpl: typeof fetch = fetch,
+): Promise<BvcHistoricalPreview> {
+  const instrument = input.instrument.trim().toUpperCase();
+  if (!/^[A-Z0-9._-]{1,30}$/.test(instrument)) throw new Error('INVALID_BVC_INSTRUMENT');
+  if (!isIsoCalendarDate(input.startDate) || !isIsoCalendarDate(input.endDate))
+    throw new Error('INVALID_BVC_DATE');
+  if (input.startDate > input.endDate) throw new Error('INVALID_BVC_DATE_RANGE');
+
+  const start = new Date(`${input.startDate}T00:00:00Z`).getTime();
+  const endAt = new Date(`${input.endDate}T00:00:00Z`).getTime();
+  const totalDays = Math.round((endAt - start) / 86_400_000);
+  if (totalDays > 1100) throw new Error('BVC_DATE_RANGE_TOO_LARGE');
+
+  const windows: Array<{ startDate: string; endDate: string }> = [];
+  let cursor = start;
+  while (cursor <= endAt) {
+    const windowEnd = Math.min(cursor + 390 * 86_400_000, endAt);
+    windows.push({
+      startDate: new Date(cursor).toISOString().slice(0, 10),
+      endDate: new Date(windowEnd).toISOString().slice(0, 10),
+    });
+    cursor = windowEnd + 86_400_000;
+  }
+
+  const candidates: BvcHistoricalCandidate[] = [];
+  const errors: string[] = [];
+  const warnings = [
+    'BVC public website data is enabled for private/staging testing only. Technical accessibility does not imply commercial redistribution rights.',
+  ];
+  const seen = new Set<string>();
+
+  for (const window of windows) {
+    const preview = await fetchBvcHistoricalPreview(
+      {
+        ...input,
+        instrument,
+        startDate: window.startDate,
+        endDate: window.endDate,
+      },
+      fetchImpl,
+    );
+    errors.push(...preview.errors);
+    warnings.push(...preview.warnings.filter((warning) => !warnings.includes(warning)));
+    for (const candidate of preview.candidates) {
+      const key = `${candidate.ticker}:${candidate.marketDate}`;
+      if (seen.has(key)) {
+        if (!warnings.some((warning) => warning.includes(`${key}: duplicate`)))
+          warnings.push(`${key}: duplicate overlapping BVC session was deduplicated.`);
+        continue;
+      }
+      seen.add(key);
+      candidates.push(candidate);
+    }
+  }
+
+  candidates.sort((a, b) => a.marketDate.localeCompare(b.marketDate));
+  const canonical = JSON.stringify({
+    instrument,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    candidates,
+  });
+  const sourceHash = createHash('sha256').update(canonical).digest('hex');
+  if (windows.length > 1)
+    warnings.push(`BVC historical range was fetched in ${windows.length} bounded request windows.`);
+
+  return {
+    providerId: BVC_PUBLIC_TESTING_PROVIDER_ID,
+    sourceUrl: BVC_STOCK_HISTORY_ENDPOINT,
+    sourceHash,
+    candidates,
+    csv: bvcHistoricalPreviewToCsv(candidates),
+    errors,
+    warnings,
+  };
 }
 
 export interface BvcSecurityMasterPreview extends SecurityMasterPreview {

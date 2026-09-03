@@ -1,47 +1,68 @@
-# SaifInvest MVP completion status
-
-This source package extends the Phase C accounting checkpoint into the user-facing MVP path.
+# SaifInvest final MVP status
 
 ## Product boundary
 
-SaifInvest is a portfolio tracking, market-research, analytics, and simulation product. It is **not a broker, custodian, bank, or order-execution venue**. A real-tracking portfolio records transactions that already occurred through the user's bank/broker. A virtual portfolio is explicitly a simulation.
+SaifInvest is a portfolio-tracking, market-research, analytics, and simulation product. It is **not a broker, custodian, bank, or order-execution venue**. A real-tracking portfolio records transactions that already occurred through the user's bank/broker. A virtual portfolio is explicitly a simulation.
 
 ## Languages
 
-The MVP supports English, French, and Arabic. Arabic remains RTL. Shared error contracts now localize EN/FR/AR and new product pages are authored in all three languages.
+The MVP supports English, French, and Arabic. Arabic remains RTL and technical/financial values are isolated where needed for readability.
 
-## Implemented in this completion pass
+## Final MVP capabilities
 
-- English locale added to profile creation and shared contracts.
-- Real-tracking vs virtual portfolio mode stored explicitly.
-- Reversal-aware sellable-holdings validation in the transaction command.
-- Public-safe market security overview and price-history read models.
-- Private, dual-administrator CSV market-price proposal/publication workflow.
-- Current portfolio valuation using exact-decimal ledger state plus latest valid price at or before the valuation date.
-- Position market value, realized/unrealized/total P&L, price freshness and missing-price states.
-- Daily close-to-close TWR and investor-perspective XIRR helpers.
-- Performance API, valuation API, market directory and security-detail pages.
-- Published OHLCV preservation and TradingView Lightweight Charts integration with close-only fallback.
-- Read-only, environment-gated BVC historical testing export based on the supplied BVC browser capture; no automatic persistence/publication.
-- Portfolio dashboard with holdings, recent transactions, corrections, CSV import, allocation, concentration and deterministic portfolio insights.
-- SaifInvest landing/auth experience and explicit non-broker language.
-- MASI benchmark remains deliberately unavailable until a valid benchmark series is supplied.
-- Unavailable market/fundamental values are never fabricated.
+- Authentication, password recovery, localized navigation, profiles, and portfolio lifecycle management.
+- Real-tracking and virtual portfolio modes.
+- Immutable transaction command covering contributions, withdrawals, recorded purchases/sales, dividends, fees, and taxes.
+- Transaction CSV preview/confirmation, immutable corrections/reversals, and optional replacements.
+- Exact-decimal weighted-average-cost accounting, deterministic historical replay, snapshots, and worker recalculation infrastructure.
+- Current portfolio valuation with holdings, cash, market value, realized/unrealized/total P&L, dividends, and stale/missing-price states.
+- Historical TWR/XIRR performance with 1M, 3M, YTD, 1Y, 3Y, and since-inception periods.
+- MASI **price-index** benchmark calculation when a valid MASI series is available; the UI explicitly does not present it as a total-return benchmark.
+- Market directory, security detail pages, OHLCV history, and TradingView Lightweight Charts with close-only fallback.
+- MASI-family index overview support when trusted/private-test observations exist.
+- Concentration, allocation, volatility/drawdown presentation when supported by the available data, plus deterministic portfolio insights and optional AI explanations.
+- Private dual-admin market-price proposal/publication workflow.
+- Private/staging BVC testing tools for security master, equity history, index master/history, and latest index snapshots.
+- BVC equity-history staging directly into the existing second-admin review workflow; up to roughly three years can be collected in bounded sequential windows.
+- Health endpoint at `/api/health`.
+- Explicit unavailable states instead of fabricated market/fundamental values.
 
 ## Market-data policy
 
-The repository still starts with synthetic securities and supports administrator-supplied CSV prices. Public production launch remains dependent on valid market-data redistribution rights. Raw CSV content proposed through the admin workflow is stored in a private database relation; publication requires a second distinct data administrator.
+Production market-data rights remain a launch dependency. The public BVC website connectors are disabled by default and are intended only for private development/staging validation. Technical accessibility does not imply commercial redistribution rights.
 
-## Validation status
+Security master and MASI-family test data can be applied to a private testing database by an authenticated `data_admin`. Equity price history is staged privately and still requires a distinct second `data_admin` before publication through the existing price-publication workflow.
 
-The baseline MVP was validated in the normal development environment before this market-data/chart slice: `pnpm check` passed, the web package reported 40 tests, and the live database suite reported 30 tests.
+## Schema checkpoint
 
-This follow-up slice adds the fifteenth migration plus the BVC testing adapter/chart integration. The packaging environment cannot install workspace dependencies, so these newest changes were syntax-transpiled and migration ordering was checked here; rerun `pnpm check`, `supabase db reset`, and `pnpm test:database` after applying this slice.
+The current source contains **18 ordered transactional migrations**, ending with:
 
-## Deferred beyond the strict MVP
+`202608280009_market_indices_and_bvc_security_master.sql`
 
-- Licensed MASI total-return benchmark integration.
-- Full fundamental statement ingestion and ratios such as PER/ROE when licensed/reliable source data is available.
-- Advanced optimizer/backtesting UI.
-- Brokerage/custody connections and order execution (out of product scope).
+No new migration was required for the final UI/read-path completion pass.
+
+## Validation handoff
+
+The uploaded baseline had already been reported green locally at the 18-migration checkpoint, including:
+
+- market-data tests: 22 passing;
+- web tests: 42 passing;
+- live PostgreSQL tests: 30 passing;
+- fresh `supabase db reset`: passing;
+- `pnpm check`: passing;
+- `git diff --check`: passing.
+
+This final package adds the direct private BVC apply/stage workflow, bounded multi-window equity-history helper, richer MASI benchmark read path, MASI-family market overview, health endpoint, and documentation/runbook updates. The packaging environment could not reach the npm registry, so the final delta must be rerun through the acceptance sequence in `docs/FINAL_MVP_RUNBOOK.md` before production deployment.
+
+## Intentionally deferred beyond MVP
+
+- Commercial/licensed BVC or other vendor market-data feed and redistribution agreement — the
+  daily ingestion pipeline (see [MARKET_DATA_OPERATIONS.md](./MARKET_DATA_OPERATIONS.md)) now
+  supports `licensed_api`/`licensed_sftp` as first-class providers, but no adapter is
+  implemented for either since no licensed vendor contract exists yet; this remains the actual
+  blocker for production activation, not the automation itself.
+- MASI total-return series unless a valid source is obtained.
+- Full issuer financial-statement ingestion and derived fundamentals such as PER/ROE/EPS.
+- Advanced optimization/backtesting/scenario-engine UI.
+- Brokerage/custody connections and order execution (outside the SaifInvest product boundary).
 - Native mobile applications.

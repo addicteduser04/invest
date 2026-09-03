@@ -48,6 +48,23 @@ describe('security master CSV preview', () => {
     ]);
   });
 
+  it('preserves optional BVC security-master metadata from normalized CSV', async () => {
+    const { previewSecurityMasterCsv } = await import('./index');
+    const result = previewSecurityMasterCsv(
+      'ticker,name,sector,listing_status,listed_on,isin,issuer_name,instrument_type,market_segment,share_count,source_id\nIAM,Maroc Telecom,Télécoms,active,,MA0000011488,ITISSALAT AL-MAGHRIB,Actions,Principal,879095340,IAM\n',
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.candidates[0]).toMatchObject({
+      ticker: 'IAM',
+      isin: 'MA0000011488',
+      issuerName: 'ITISSALAT AL-MAGHRIB',
+      instrumentType: 'Actions',
+      marketSegment: 'Principal',
+      shareCount: '879095340',
+      sourceId: 'IAM',
+    });
+  });
+
   it('rejects duplicate and malformed tickers', async () => {
     const { previewSecurityMasterCsv } = await import('./index');
     const result = previewSecurityMasterCsv('ticker,name\nBAD TICKER,One\nIAM,Two\nIAM,Three\n');
@@ -206,6 +223,44 @@ describe('BVC public historical testing adapter', () => {
         endDate: '2026-08-28',
       }),
     ).rejects.toThrow('BVC_DATE_RANGE_TOO_LARGE');
+  });
+
+  it('fetches up to three years through multiple bounded windows without duplicate sessions', async () => {
+    const { fetchBvcHistoricalRangePreview } = await import('./index');
+    const requested: string[] = [];
+    const mockFetch: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requested.push(url.toString());
+      const date = url.searchParams.get('endDate') ?? '2026-08-28';
+      const [year, month, day] = date.split('-');
+      return new Response(
+        JSON.stringify({
+          totalCount: 1,
+          items: [
+            {
+              seance: `${day}/${month}/${year}`,
+              symbol: 'IAM',
+              ouverture: 100,
+              dernierCours: 101,
+              plusHaut: 102,
+              plusBas: 99,
+              titresEchanges: 1000,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const preview = await fetchBvcHistoricalRangePreview(
+      { instrument: 'IAM', startDate: '2025-01-01', endDate: '2026-08-28' },
+      mockFetch,
+    );
+    expect(requested.length).toBeGreaterThan(1);
+    expect(preview.errors).toEqual([]);
+    expect(preview.candidates).toHaveLength(requested.length);
+    expect(preview.warnings.some((warning) => warning.includes('bounded request windows'))).toBe(
+      true,
+    );
   });
 
   it('returns a stable error when BVC responds with invalid JSON', async () => {
