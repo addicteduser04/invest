@@ -1,14 +1,9 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { asLocale, direction } from '@/lib/i18n';
-import { SiteNav } from '@/components/site-nav';
+import { asLocale, direction, getUi } from '@/lib/i18n';
+import { PublicNav } from '@/components/public/public-nav';
+import { PublicFooter } from '@/components/public/public-footer';
 import { AdminSecurityImport, type AdminSecurityRow } from '@/components/admin-security-import';
-
-const copy = {
-  en: { title: 'Security master administration', prices: 'Price imports' },
-  fr: { title: 'Administration du référentiel titres', prices: 'Imports de cours' },
-  ar: { title: 'إدارة مرجع الأوراق المالية', prices: 'استيراد الأسعار' },
-} as const;
 
 export default async function SecurityAdminPage({
   params,
@@ -17,6 +12,7 @@ export default async function SecurityAdminPage({
 }) {
   const { locale: rawLocale } = await params;
   const locale = asLocale(rawLocale);
+  const t = getUi(locale);
   const supabase = await createClient();
   const {
     data: { user },
@@ -31,18 +27,20 @@ export default async function SecurityAdminPage({
   if (!role) redirect(`/${locale}/dashboard`);
   const { data: rows } = await supabase.rpc('list_market_security_master_admin');
   return (
-    <main className="app-shell" dir={direction(locale)}>
-      <SiteNav locale={locale} authenticated />
-      <div className="page-heading">
+    <main className="public-page admin-v2-page" dir={direction(locale)}>
+      <PublicNav locale={locale} authenticated />
+      <div className="admin-v2-hero">
         <div>
-          <p className="eyebrow">Admin</p>
-          <h1>{copy[locale].title}</h1>
+          <p className="public-eyebrow">{t.adminEyebrow}</p>
+          <h1>{t.adminSecurityMasterTitle}</h1>
         </div>
-        <a className="button secondary compact" href={`/${locale}/admin/import`}>
-          {copy[locale].prices}
-        </a>
+        <a href={`/${locale}/admin/import`}>{t.adminPriceImportsLink}</a>
+        <a href={`/${locale}/admin/market-data`}>{t.adminMarketDataLink}</a>
       </div>
-      <AdminSecurityImport locale={locale} rows={(rows ?? []) as AdminSecurityRow[]} />
+      <div className="admin-v2-body">
+        <AdminSecurityImport locale={locale} rows={(rows ?? []) as AdminSecurityRow[]} />
+      </div>
+      <PublicFooter locale={locale} authenticated />
     </main>
   );
 }
