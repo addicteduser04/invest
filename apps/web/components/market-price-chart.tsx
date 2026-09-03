@@ -15,7 +15,14 @@ type HistoryPoint = {
 
 type ChartSeries = {
   setData(data: readonly Record<string, unknown>[]): void;
+  createPriceLine?(options: Record<string, unknown>): void;
   priceScale?: () => { applyOptions(options: Record<string, unknown>): void };
+};
+
+type CrosshairParam = {
+  point?: { x: number; y: number };
+  time?: string;
+  seriesData?: Map<ChartSeries, unknown>;
 };
 
 type ChartApi = {
@@ -25,6 +32,8 @@ type ChartApi = {
   };
   resize(width: number, height: number): void;
   remove(): void;
+  subscribeCrosshairMove?(handler: (param: CrosshairParam) => void): void;
+  unsubscribeCrosshairMove?(handler: (param: CrosshairParam) => void): void;
 };
 
 type LightweightChartsGlobal = {
@@ -34,15 +43,9 @@ type LightweightChartsGlobal = {
   HistogramSeries: unknown;
 };
 
-declare global {
-  interface Window {
-    LightweightCharts?: LightweightChartsGlobal;
-  }
-}
+type RangeKey = '1M' | '3M' | 'YTD' | '1Y' | '3Y';
 
-type RangeKey = '1M' | '3M' | '1Y' | '3Y';
-
-const rangeDays: Record<RangeKey, number> = {
+const rangeDays: Record<Exclude<RangeKey, 'YTD'>, number> = {
   '1M': 31,
   '3M': 93,
   '1Y': 366,
@@ -56,6 +59,7 @@ const copy = {
     attribution: 'TradingView',
     dataBoundary:
       'TradingView provides the charting library only; price data comes from SaifInvest.',
+    shortened: 'Range shortened to available local history.',
   },
   fr: {
     loading: 'Chargement du graphique interactif…',
@@ -63,16 +67,25 @@ const copy = {
     attribution: 'TradingView',
     dataBoundary:
       'TradingView fournit uniquement la bibliothèque graphique ; les prix proviennent de SaifInvest.',
+    shortened: 'Période limitée par l’historique local disponible.',
   },
   ar: {
     loading: 'جارٍ تحميل الرسم التفاعلي…',
     unavailable: 'الرسم التفاعلي غير متاح؛ يتم عرض سجل أسعار مبسط.',
     attribution: 'TradingView',
     dataBoundary: 'توفر TradingView مكتبة الرسم فقط؛ أما بيانات الأسعار فتأتي من SaifInvest.',
+    shortened: 'تم تقصير الفترة حسب السجل المحلي المتاح.',
   },
 } as const;
 
 const isFinitePrice = (value: string | null) => value !== null && Number.isFinite(Number(value));
+
+function rangeStart(range: RangeKey, latestDate: string) {
+  if (range === 'YTD') return `${latestDate.slice(0, 4)}-01-01`;
+  const cutoff = new Date(`${latestDate}T00:00:00Z`);
+  cutoff.setUTCDate(cutoff.getUTCDate() - rangeDays[range]);
+  return cutoff.toISOString().slice(0, 10);
+}
 
 export function MarketPriceChart({
   locale,
@@ -85,20 +98,30 @@ export function MarketPriceChart({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ChartApi | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
   const [scriptReady, setScriptReady] = useState(false);
   const [scriptFailed, setScriptFailed] = useState(false);
   const [range, setRange] = useState<RangeKey>('1Y');
   const t = copy[locale];
+  const orderedHistory = useMemo(
+    () => [...history].sort((a, b) => a.market_date.localeCompare(b.market_date)),
+    [history],
+  );
 
   const filtered = useMemo(() => {
-    const ordered = [...history].sort((a, b) => a.market_date.localeCompare(b.market_date));
-    const last = ordered.at(-1);
-    if (!last) return ordered;
-    const cutoff = new Date(`${last.market_date}T00:00:00Z`);
-    cutoff.setUTCDate(cutoff.getUTCDate() - rangeDays[range]);
-    const cutoffIso = cutoff.toISOString().slice(0, 10);
-    return ordered.filter((point) => point.market_date >= cutoffIso);
-  }, [history, range]);
+    const last = orderedHistory.at(-1);
+    if (!last) return orderedHistory;
+    const cutoffIso = rangeStart(range, last.market_date);
+    const scoped = orderedHistory.filter((point) => point.market_date >= cutoffIso);
+    return scoped.length >= 2 ? scoped : orderedHistory;
+  }, [orderedHistory, range]);
+
+  const firstAvailable = orderedHistory[0]?.market_date ?? null;
+  const lastAvailable = orderedHistory.at(-1)?.market_date ?? null;
+  const rangeShortened =
+    Boolean(firstAvailable && lastAvailable) &&
+    filtered[0]?.market_date === firstAvailable &&
+    rangeStart(range, lastAvailable ?? firstAvailable ?? '') < firstAvailable;
 
   const hasCandles =
     filtered.filter(
@@ -114,24 +137,23 @@ export function MarketPriceChart({
       !scriptReady ||
       scriptFailed ||
       !containerRef.current ||
-      !window.LightweightCharts ||
+      !getLightweightCharts() ||
       !filtered.length
     )
       return;
 
     chartRef.current?.remove();
-    const library = window.LightweightCharts;
+    const library = getLightweightCharts()!;
     const container = containerRef.current;
     const styles = getComputedStyle(container);
     const textColor = styles.getPropertyValue('--muted').trim() || '#64716b';
     const lineColor = styles.getPropertyValue('--line').trim() || '#d8dfda';
     const surface = styles.getPropertyValue('--surface').trim() || '#ffffff';
-    const green = styles.getPropertyValue('--green').trim() || '#153f31';
     const green2 = styles.getPropertyValue('--green-2').trim() || '#43866c';
 
     const chart = library.createChart(container, {
       width: container.clientWidth,
-      height: 360,
+      height: 420,
       layout: {
         background: { type: 'solid', color: surface },
         textColor,
@@ -158,12 +180,13 @@ export function MarketPriceChart({
       },
     });
 
+    let primarySeries: ChartSeries;
     if (hasCandles) {
       const candleSeries = chart.addSeries(library.CandlestickSeries, {
         upColor: green2,
-        downColor: '#a34747',
+        downColor: '#e05c58',
         wickUpColor: green2,
-        wickDownColor: '#a34747',
+        wickDownColor: '#e05c58',
         borderVisible: false,
         priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
       });
@@ -184,15 +207,29 @@ export function MarketPriceChart({
             close: Number(point.close_price),
           })),
       );
+      primarySeries = candleSeries;
     } else {
       const lineSeries = chart.addSeries(library.LineSeries, {
-        color: green,
+        color: green2,
         lineWidth: 2,
         priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
       });
       lineSeries.setData(
         filtered.map((point) => ({ time: point.market_date, value: Number(point.close_price) })),
       );
+      primarySeries = lineSeries;
+    }
+
+    const latest = filtered.at(-1);
+    if (latest) {
+      primarySeries.createPriceLine?.({
+        price: Number(latest.close_price),
+        color: green2,
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title: `${ticker} ${Number(latest.close_price).toFixed(2)}`,
+      });
     }
 
     const volumeRows = filtered.filter(
@@ -217,20 +254,43 @@ export function MarketPriceChart({
       });
     }
 
+    const showTooltip = (param: CrosshairParam) => {
+      const tooltip = tooltipRef.current;
+      if (!tooltip || !param.point || !param.time) {
+        if (tooltip) tooltip.style.opacity = '0';
+        return;
+      }
+      const row = filtered.find((point) => point.market_date === param.time);
+      if (!row) {
+        tooltip.style.opacity = '0';
+        return;
+      }
+      tooltip.textContent = `${row.market_date}\nO ${row.open_price ?? '—'} H ${
+        row.high_price ?? '—'
+      } L ${row.low_price ?? '—'} C ${row.close_price}\nVOL ${row.volume ?? '—'}`;
+      tooltip.style.opacity = '1';
+      tooltip.style.transform = `translate(${Math.min(param.point.x + 14, container.clientWidth - 190)}px, ${Math.max(
+        10,
+        param.point.y - 34,
+      )}px)`;
+    };
+
+    chart.subscribeCrosshairMove?.(showTooltip);
     chart.timeScale().fitContent();
     chartRef.current = chart;
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (entry) chart.resize(Math.max(1, Math.floor(entry.contentRect.width)), 360);
+      if (entry) chart.resize(Math.max(1, Math.floor(entry.contentRect.width)), 420);
     });
     observer.observe(container);
 
     return () => {
+      chart.unsubscribeCrosshairMove?.(showTooltip);
       observer.disconnect();
       chart.remove();
       if (chartRef.current === chart) chartRef.current = null;
     };
-  }, [filtered, hasCandles, locale, scriptFailed, scriptReady]);
+  }, [filtered, hasCandles, locale, scriptFailed, scriptReady, ticker]);
 
   const fallbackValues = filtered.map((point) => Number(point.close_price)).filter(Number.isFinite);
   const max = Math.max(...fallbackValues, 1);
@@ -243,17 +303,18 @@ export function MarketPriceChart({
         src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"
         strategy="afterInteractive"
         onReady={() => {
-          if (window.LightweightCharts) setScriptReady(true);
+          if (getLightweightCharts()) setScriptReady(true);
           else setScriptFailed(true);
         }}
         onError={() => setScriptFailed(true)}
       />
       <div className="market-chart-toolbar" aria-label={`${ticker} chart period`}>
-        {(Object.keys(rangeDays) as RangeKey[]).map((key) => (
+        {(['1M', '3M', 'YTD', '1Y', '3Y'] as RangeKey[]).map((key) => (
           <button
             key={key}
             type="button"
             className={key === range ? 'active' : ''}
+            disabled={orderedHistory.length < 2}
             onClick={() => setRange(key)}
           >
             {key}
@@ -261,12 +322,16 @@ export function MarketPriceChart({
         ))}
       </div>
       {!scriptFailed ? (
-        <div
-          ref={containerRef}
-          className="tradingview-chart"
-          aria-label={`${ticker} price chart`}
-        />
+        <div className="tradingview-chart-wrap">
+          <div
+            ref={containerRef}
+            className="tradingview-chart"
+            aria-label={`${ticker} price chart`}
+          />
+          <div ref={tooltipRef} className="market-chart-tooltip" aria-hidden="true" />
+        </div>
       ) : null}
+      {rangeShortened ? <p className="chart-loading">{t.shortened}</p> : null}
       {!scriptReady && !scriptFailed ? <p className="chart-loading">{t.loading}</p> : null}
       {scriptFailed ? (
         <>
@@ -298,4 +363,10 @@ export function MarketPriceChart({
       </div>
     </div>
   );
+}
+
+function getLightweightCharts() {
+  return (window as unknown as Record<string, LightweightChartsGlobal | undefined>)[
+    'LightweightCharts'
+  ];
 }

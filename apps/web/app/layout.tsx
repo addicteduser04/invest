@@ -1,5 +1,14 @@
 import type { Metadata } from 'next';
+import { Fraunces } from 'next/font/google';
 import './globals.css';
+
+const editorialSerif = Fraunces({
+  subsets: ['latin'],
+  weight: ['400', '600', '900'],
+  style: ['normal', 'italic'],
+  variable: '--font-serif',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'SaifInvest — Moroccan Portfolio Intelligence',
@@ -9,7 +18,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className={editorialSerif.variable} suppressHydrationWarning>
       <body>{children}</body>
     </html>
   );

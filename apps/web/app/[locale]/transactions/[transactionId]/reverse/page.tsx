@@ -1,7 +1,9 @@
 import { notFound, redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { asLocale, direction } from '@/lib/i18n';
-import { SiteNav } from '@/components/site-nav';
+import { asLocale, direction, getUi } from '@/lib/i18n';
+import { MarketTicker, type TickerItem } from '@/components/public/market-ticker';
+import { PublicNav } from '@/components/public/public-nav';
+import { PublicFooter } from '@/components/public/public-footer';
 import { ReversalWorkflow } from './reversal-workflow';
 
 export default async function ReverseTransactionPage({
@@ -11,6 +13,7 @@ export default async function ReverseTransactionPage({
 }) {
   const { locale: rawLocale, transactionId } = await params;
   const locale = asLocale(rawLocale);
+  const t = getUi(locale);
   const supabase = await createClient();
   const {
     data: { user },
@@ -45,12 +48,39 @@ export default async function ReverseTransactionPage({
         .eq('reverses_transaction_id', transaction.id)
         .maybeSingle(),
     ]);
+  const [{ data: allSecurities }, { data: tickerIndices }] = await Promise.all([
+    supabase
+      .from('market_security_overview')
+      .select('id,ticker,name,latest_close_price,daily_change_percent')
+      .eq('listing_status', 'active')
+      .order('ticker'),
+    supabase
+      .from('market_index_overview')
+      .select('id,code,name,latest_close_value,daily_change_percent')
+      .in('code', ['MASI', 'MSI20', 'ESGI', 'MASIMS'])
+      .order('code'),
+  ]);
+  const securities = (allSecurities ?? []) as MarketSecurity[];
+  const tickerItems = buildTickerItems(
+    locale,
+    (tickerIndices ?? []) as MarketIndex[],
+    securities.slice(0, 10),
+  );
   return (
-    <main className="app-shell" dir={direction(locale)}>
-      <SiteNav locale={locale} authenticated />
-      <section className="card" style={{ marginTop: 40 }}>
+    <main className="public-page transactions-v2-page" dir={direction(locale)}>
+      <PublicNav locale={locale} authenticated />
+      <MarketTicker locale={locale} items={tickerItems} />
+      <section className="transactions-v2-hero compact">
+        <div>
+          <p className="public-eyebrow">{t.correction}</p>
+          <h1>{t.transactionHistory}</h1>
+          <p>{t.transactionHistoryHint}</p>
+        </div>
+      </section>
+      <section className="transactions-v2-reversal">
         <ReversalWorkflow
           locale={locale}
+          securities={securities.map(({ id, ticker, name }) => ({ id, ticker, name }))}
           transaction={{
             id: transaction.id,
             portfolioId: transaction.portfolio_id,
@@ -72,6 +102,47 @@ export default async function ReverseTransactionPage({
           }}
         />
       </section>
+      <PublicFooter locale={locale} authenticated />
     </main>
   );
+}
+
+interface MarketSecurity {
+  id: string;
+  ticker: string;
+  name: string;
+  latest_close_price: string | null;
+  daily_change_percent: string | number | null;
+}
+
+interface MarketIndex {
+  id: string;
+  code: string;
+  name: string;
+  latest_close_value: string | null;
+  daily_change_percent: string | number | null;
+}
+
+function buildTickerItems(locale: string, indices: MarketIndex[], securities: MarketSecurity[]) {
+  const indexItems: TickerItem[] = indices.map((index) => ({
+    id: index.id,
+    ticker: index.code,
+    name: index.name,
+    href: `/${locale}/market`,
+    price: index.latest_close_value,
+    changePercent: index.daily_change_percent,
+    kind: 'index',
+  }));
+  const securityItems = securities
+    .filter((security) => security.latest_close_price !== null)
+    .map<TickerItem>((security) => ({
+      id: security.id,
+      ticker: security.ticker,
+      name: security.name,
+      href: `/${locale}/market/${security.id}`,
+      price: security.latest_close_price,
+      changePercent: security.daily_change_percent,
+      kind: 'security',
+    }));
+  return [...indexItems, ...securityItems];
 }

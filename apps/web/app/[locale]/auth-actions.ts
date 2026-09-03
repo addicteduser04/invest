@@ -1,8 +1,13 @@
 'use server';
 import { redirect } from 'next/navigation';
 import { cookies, headers } from 'next/headers';
+import { transactionInputSchema } from '@bvc/contracts';
 import { createClient } from '@/lib/supabase/server';
 import { asLocale } from '@/lib/i18n';
+
+export type RecordTransactionState = {
+  error?: string;
+};
 
 export async function register(formData: FormData) {
   const locale = asLocale(String(formData.get('locale') ?? 'fr'));
@@ -56,31 +61,129 @@ export async function createPortfolio(formData: FormData) {
 
 export async function addTransaction(formData: FormData) {
   const locale = asLocale(String(formData.get('locale') ?? 'fr'));
+  const portfolioId = await recordTransactionCommand(formData);
+  redirect(`/${locale}/dashboard?portfolio=${encodeURIComponent(portfolioId)}&recorded=1`);
+}
+
+export async function recordTransactionV2(
+  _state: RecordTransactionState,
+  formData: FormData,
+): Promise<RecordTransactionState> {
+  try {
+    const locale = asLocale(String(formData.get('locale') ?? 'fr'));
+    const portfolioId = await recordTransactionCommand(formData);
+    redirect(`/${locale}/dashboard?portfolio=${encodeURIComponent(portfolioId)}&recorded=1`);
+  } catch (error) {
+    if (isNextRedirect(error)) throw error;
+    const locale = asLocale(String(formData.get('locale') ?? 'fr'));
+    return { error: humanizeTransactionError(error, locale) };
+  }
+}
+
+async function recordTransactionCommand(formData: FormData) {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error('Unauthorized');
-  const type = String(formData.get('type'));
-  const amount = formData.get('amount') ? String(formData.get('amount')) : null;
   const portfolioId = String(formData.get('portfolioId'));
   const settlementDate = formData.get('settlementDate')
     ? String(formData.get('settlementDate'))
     : new Date().toISOString().slice(0, 10);
+  const amount = formData.get('amount')
+    ? normalizeDecimal(String(formData.get('amount')))
+    : undefined;
+  const quantity = formData.get('quantity')
+    ? normalizeDecimal(String(formData.get('quantity')))
+    : undefined;
+  const unitPrice = formData.get('unitPrice')
+    ? normalizeDecimal(String(formData.get('unitPrice')))
+    : undefined;
+  const fees = formData.get('fees') ? normalizeDecimal(String(formData.get('fees'))) : '0';
+  const taxes = formData.get('taxes') ? normalizeDecimal(String(formData.get('taxes'))) : '0';
+  const securityId = formData.get('securityId') ? String(formData.get('securityId')) : undefined;
+  const idempotencyKey =
+    formData.get('idempotencyKey') && String(formData.get('idempotencyKey')).length >= 16
+      ? String(formData.get('idempotencyKey'))
+      : crypto.randomUUID();
+
+  const parsed = transactionInputSchema.safeParse({
+    portfolioId,
+    type: String(formData.get('type')),
+    securityId,
+    settlementDate,
+    quantity,
+    unitPrice,
+    amount,
+    fees,
+    taxes,
+    idempotencyKey,
+  });
+  if (!parsed.success) throw new Error(`invalid: ${parsed.error.issues[0]?.message ?? 'input'}`);
+
   const { error } = await supabase.rpc('record_transaction', {
-    p_portfolio_id: portfolioId,
-    p_type: type,
-    p_settlement_date: settlementDate,
-    p_idempotency_key: crypto.randomUUID(),
-    p_amount: amount,
-    p_security_id: formData.get('securityId') ? String(formData.get('securityId')) : null,
-    p_quantity: formData.get('quantity') ? String(formData.get('quantity')) : null,
-    p_unit_price: formData.get('unitPrice') ? String(formData.get('unitPrice')) : null,
-    p_fees: formData.get('fees') ? String(formData.get('fees')) : '0',
-    p_taxes: formData.get('taxes') ? String(formData.get('taxes')) : '0',
+    p_portfolio_id: parsed.data.portfolioId,
+    p_type: parsed.data.type,
+    p_settlement_date: parsed.data.settlementDate,
+    p_idempotency_key: parsed.data.idempotencyKey,
+    p_amount: parsed.data.amount ?? null,
+    p_security_id: parsed.data.securityId ?? null,
+    p_quantity: parsed.data.quantity ?? null,
+    p_unit_price: parsed.data.unitPrice ?? null,
+    p_fees: parsed.data.fees ?? '0',
+    p_taxes: parsed.data.taxes ?? '0',
   });
   if (error) throw new Error(error.message);
-  redirect(`/${locale}/dashboard?portfolio=${encodeURIComponent(portfolioId)}`);
+  return portfolioId;
+}
+
+function isNextRedirect(error: unknown) {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'digest' in error &&
+    String((error as { digest?: unknown }).digest).startsWith('NEXT_REDIRECT')
+  );
+}
+
+function normalizeDecimal(value: string) {
+  return value.trim().replace(',', '.');
+}
+
+function humanizeTransactionError(error: unknown, locale: 'en' | 'fr' | 'ar') {
+  const message = error instanceof Error ? error.message : String(error);
+  const copy = {
+    en: {
+      quantity: 'The sale is larger than the recorded holding for this security.',
+      invalid:
+        'Check the amount, quantity, price, fees, and taxes before recording this operation.',
+      forbidden: 'You are not allowed to record this operation for this portfolio.',
+      fallback: 'Unable to record this operation. Check the details and try again.',
+    },
+    fr: {
+      quantity: 'La vente dépasse la quantité enregistrée pour ce titre.',
+      invalid:
+        'Vérifiez le montant, la quantité, le prix, les frais et les taxes avant d’enregistrer cette opération.',
+      forbidden: 'Vous n’êtes pas autorisé à enregistrer cette opération pour ce portefeuille.',
+      fallback: 'Impossible d’enregistrer cette opération. Vérifiez les informations et réessayez.',
+    },
+    ar: {
+      quantity: 'البيع أكبر من الكمية المسجلة لهذا السهم.',
+      invalid: 'تحقق من المبلغ والكمية والسعر والرسوم والضرائب قبل تسجيل هذه العملية.',
+      forbidden: 'لا تملك صلاحية تسجيل هذه العملية لهذه المحفظة.',
+      fallback: 'تعذر تسجيل هذه العملية. تحقق من التفاصيل وحاول مرة أخرى.',
+    },
+  }[locale];
+  if (/insufficient (shares|quantity)/i.test(message)) {
+    return copy.quantity;
+  }
+  if (/^invalid:|invalid buy\/sell|invalid amount|check constraint|violates/i.test(message)) {
+    return copy.invalid;
+  }
+  if (/forbidden|unauthorized/i.test(message)) {
+    return copy.forbidden;
+  }
+  return message || copy.fallback;
 }
 
 export async function requestPasswordReset(formData: FormData) {
@@ -133,7 +236,7 @@ export async function updateProfileSettings(formData: FormData) {
     maxAge: 31_536_000,
     sameSite: 'lax',
   });
-  redirect(`/${locale}/settings?saved=1`);
+  redirect(`/${locale}/account?saved=1`);
 }
 
 export async function renamePortfolio(formData: FormData) {
@@ -153,7 +256,7 @@ export async function renamePortfolio(formData: FormData) {
     .eq('id', portfolioId)
     .eq('owner_id', user.id);
   if (error) throw new Error(error.message);
-  redirect(`/${locale}/settings?saved=1`);
+  redirect(`/${locale}/account?saved=1`);
 }
 
 export async function archivePortfolio(formData: FormData) {
@@ -171,7 +274,7 @@ export async function archivePortfolio(formData: FormData) {
     .eq('id', portfolioId)
     .eq('owner_id', user.id);
   if (error) throw new Error(error.message);
-  redirect(`/${locale}/settings?saved=1`);
+  redirect(`/${locale}/account?saved=1`);
 }
 
 export async function restorePortfolio(formData: FormData) {
@@ -189,5 +292,5 @@ export async function restorePortfolio(formData: FormData) {
     .eq('id', portfolioId)
     .eq('owner_id', user.id);
   if (error) throw new Error(error.message);
-  redirect(`/${locale}/settings?saved=1`);
+  redirect(`/${locale}/account?saved=1`);
 }

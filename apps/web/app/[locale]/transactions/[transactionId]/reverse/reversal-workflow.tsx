@@ -1,6 +1,13 @@
 'use client';
 import React, { useRef, useState } from 'react';
 import type { Locale } from '@bvc/contracts';
+import { getUi } from '@/lib/i18n';
+import { SecurityPicker, type Security } from '@/components/security-picker';
+import {
+  transactionTypeLabel,
+  transactionTypes,
+  type TransactionType,
+} from '@/lib/transaction-types';
 
 export type ReversalTransaction = {
   id: string;
@@ -22,85 +29,8 @@ export type ReversalTransaction = {
   reversedById?: string;
 };
 
-const copy = {
-  en: {
-    title: 'Reverse or replace transaction',
-    permanent:
-      'The original transaction remains permanently in history. A linked counter-entry records the correction.',
-    reason: 'Detailed reversal reason',
-    replace: 'Create a replacement transaction',
-    confirm: 'I confirm that I reviewed the transaction and its effects',
-    submit: 'Record correction',
-    busy: 'Recording correction…',
-    success: 'Correction recorded. Original history is preserved.',
-    back: 'Back to transaction history',
-    portfolio: 'Portfolio',
-    type: 'Type',
-    date: 'Accounting date',
-    security: 'Security',
-    quantity: 'Quantity',
-    price: 'Unit price',
-    fees: 'Fees',
-    taxes: 'Taxes',
-    cash: 'Original recorded cash effect',
-    inverse: 'Server-derived counter-effect',
-    imported: 'Source import',
-    replacementType: 'Replacement type',
-    replacementDate: 'Replacement date',
-    amount: 'Amount',
-  },
-  fr: {
-    title: 'Annuler ou remplacer l’opération',
-    permanent:
-      'L’opération originale restera définitivement dans l’historique. Une contre-écriture liée enregistrera son annulation.',
-    reason: 'Motif détaillé de l’annulation',
-    replace: 'Créer une opération de remplacement',
-    confirm: 'Je confirme avoir vérifié l’opération et ses effets',
-    submit: 'Enregistrer la correction',
-    busy: 'Correction en cours…',
-    success: 'Correction enregistrée. L’historique original est préservé.',
-    back: 'Retour à l’historique',
-    portfolio: 'Portefeuille',
-    type: 'Type',
-    date: 'Date comptable',
-    security: 'Titre',
-    quantity: 'Quantité',
-    price: 'Prix unitaire',
-    fees: 'Frais',
-    taxes: 'Taxes',
-    cash: 'Effet de trésorerie original',
-    inverse: 'Contre-effet dérivé par le serveur',
-    imported: 'Import source',
-    replacementType: 'Type du remplacement',
-    replacementDate: 'Date du remplacement',
-    amount: 'Montant',
-  },
-  ar: {
-    title: 'عكس العملية أو استبدالها',
-    permanent: 'ستبقى العملية الأصلية محفوظة دائماً في السجل. سيسجل قيد عكسي مرتبط عملية الإلغاء.',
-    reason: 'السبب المفصل للعكس',
-    replace: 'إنشاء عملية بديلة',
-    confirm: 'أؤكد أنني تحققت من العملية وآثارها',
-    submit: 'تسجيل التصحيح',
-    busy: 'جارٍ تسجيل التصحيح…',
-    success: 'تم تسجيل التصحيح مع الحفاظ على السجل الأصلي.',
-    back: 'العودة إلى سجل العمليات',
-    portfolio: 'المحفظة',
-    type: 'النوع',
-    date: 'التاريخ المحاسبي',
-    security: 'السهم',
-    quantity: 'الكمية',
-    price: 'سعر الوحدة',
-    fees: 'الرسوم',
-    taxes: 'الضرائب',
-    cash: 'الأثر النقدي الأصلي',
-    inverse: 'الأثر العكسي المشتق من الخادم',
-    imported: 'مرجع الاستيراد',
-    replacementType: 'نوع العملية البديلة',
-    replacementDate: 'تاريخ العملية البديلة',
-    amount: 'المبلغ',
-  },
-};
+const isKnownType = (value: string): value is TransactionType =>
+  (transactionTypes as string[]).includes(value);
 
 const decimalWithSign = (value: string) =>
   value.startsWith('-') || value === '0' ? value : `+${value}`;
@@ -112,20 +42,25 @@ const negateDecimal = (value: string) => {
 export function ReversalWorkflow({
   locale,
   transaction,
+  securities,
 }: {
   locale: Locale;
   transaction: ReversalTransaction;
+  securities: Security[];
 }) {
-  const t = copy[locale];
+  const t = getUi(locale);
   const [reason, setReason] = useState('');
   const [withReplacement, setWithReplacement] = useState(false);
-  const [replacementType, setReplacementType] = useState('deposit');
+  const [replacementType, setReplacementType] = useState<TransactionType>('deposit');
+  const [replacementSecurityId, setReplacementSecurityId] = useState('');
+  const [replacementSecurityQuery, setReplacementSecurityQuery] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState(false);
   const [failure, setFailure] = useState<{ code: string; message: string }>();
   const key = useRef(globalThis.crypto?.randomUUID?.() ?? `reversal-${Date.now()}-request`);
   const status = useRef<HTMLDivElement>(null);
+  const replacementSecurityOperation = replacementType === 'buy' || replacementType === 'sell';
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -137,9 +72,9 @@ export function ReversalWorkflow({
       ? {
           type: replacementType,
           settlementDate: String(form.get('replacementDate')),
-          ...(['buy', 'sell'].includes(replacementType)
+          ...(replacementSecurityOperation
             ? {
-                securityId: String(form.get('securityId')),
+                securityId: replacementSecurityId,
                 quantity: String(form.get('quantity')),
                 unitPrice: String(form.get('unitPrice')),
                 fees: String(form.get('fees') || '0'),
@@ -177,23 +112,28 @@ export function ReversalWorkflow({
   return (
     <div className="correction-flow">
       <div ref={status} className="status-message" role="status" aria-live="polite" tabIndex={-1}>
-        {busy ? t.busy : success ? t.success : (failure?.message ?? '')}
+        {busy ? t.reversalBusy : success ? t.reversalSuccess : (failure?.message ?? '')}
       </div>
-      <h1>{t.title}</h1>
-      <p className="notice">{t.permanent}</p>
+      <h1>{t.reversalTitle}</h1>
+      <p className="notice">{t.reversalPermanentNotice}</p>
       <dl className="summary-grid">
         {[
-          [t.portfolio, transaction.portfolioName],
-          [t.type, transaction.type],
+          [t.dashboard, transaction.portfolioName],
+          [
+            t.type,
+            isKnownType(transaction.type)
+              ? transactionTypeLabel(transaction.type, locale)
+              : t.reversal,
+          ],
           [t.date, transaction.settlementDate],
           [t.security, transaction.securityLabel],
           [t.quantity, transaction.quantity],
-          [t.price, transaction.unitPrice],
+          [t.unitPrice, transaction.unitPrice],
           [t.fees, transaction.fees],
           [t.taxes, transaction.taxes],
-          [t.cash, `${decimalWithSign(transaction.netAmount)} MAD`],
-          [t.inverse, `${decimalWithSign(negateDecimal(transaction.netAmount))} MAD`],
-          [t.imported, transaction.importId],
+          [t.reversalOriginalCashEffect, `${decimalWithSign(transaction.netAmount)} MAD`],
+          [t.reversalCounterEffect, `${decimalWithSign(negateDecimal(transaction.netAmount))} MAD`],
+          [t.reversalSourceImport, transaction.importId],
         ].flatMap(([label, value]) =>
           value
             ? [
@@ -209,15 +149,11 @@ export function ReversalWorkflow({
       </dl>
       {transaction.reversedById ? (
         <p className="error-text" role="alert">
-          {locale === 'ar'
-            ? 'تم عكس هذه العملية مسبقاً.'
-            : locale === 'en'
-              ? 'This transaction has already been reversed.'
-              : 'Cette opération est déjà annulée.'}
+          {t.reversalAlreadyReversed}
         </p>
       ) : (
         <form className="form panel" onSubmit={(event) => void submit(event)}>
-          <label htmlFor="reversal-reason">{t.reason}</label>
+          <label htmlFor="reversal-reason">{t.reversalReasonLabel}</label>
           <textarea
             id="reversal-reason"
             name="reason"
@@ -235,7 +171,7 @@ export function ReversalWorkflow({
               disabled={busy}
               onChange={(event) => setWithReplacement(event.target.checked)}
             />
-            {t.replace}
+            {t.reversalReplaceLabel}
           </label>
           {withReplacement ? (
             <fieldset className="replacement-fields">
@@ -244,31 +180,44 @@ export function ReversalWorkflow({
                 <select
                   name="replacementType"
                   value={replacementType}
-                  onChange={(event) => setReplacementType(event.target.value)}
+                  onChange={(event) => setReplacementType(event.target.value as TransactionType)}
                 >
-                  {['deposit', 'withdrawal', 'buy', 'sell', 'dividend', 'fee', 'tax'].map(
-                    (type) => (
-                      <option key={type}>{type}</option>
-                    ),
-                  )}
+                  {transactionTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {transactionTypeLabel(type, locale)}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label>
                 {t.replacementDate}
                 <input name="replacementDate" type="date" required />
               </label>
-              {['buy', 'sell'].includes(replacementType) ? (
+              {replacementSecurityOperation ? (
                 <>
-                  <label>
-                    {t.security}
-                    <input name="securityId" defaultValue={transaction.securityId} required />
-                  </label>
+                  <SecurityPicker
+                    label={t.security}
+                    securities={securities}
+                    selectedId={replacementSecurityId}
+                    query={replacementSecurityQuery}
+                    onQueryChange={(value) => {
+                      setReplacementSecurityQuery(value);
+                      setReplacementSecurityId('');
+                    }}
+                    onSelect={(id) => {
+                      setReplacementSecurityId(id);
+                      setReplacementSecurityQuery('');
+                    }}
+                    placeholder={t.securitySearchPlaceholder}
+                    noResultsLabel={t.noMarketResults}
+                    resultsId="replacement-security-results"
+                  />
                   <label>
                     {t.quantity}
                     <input name="quantity" inputMode="decimal" pattern="\d+(\.\d+)?" required />
                   </label>
                   <label>
-                    {t.price}
+                    {t.unitPrice}
                     <input name="unitPrice" inputMode="decimal" pattern="\d+(\.\d+)?" required />
                   </label>
                   <label>
@@ -282,7 +231,7 @@ export function ReversalWorkflow({
                   <input name="amount" inputMode="decimal" pattern="\d+(\.\d+)?" required />
                 </label>
               )}
-              {replacementType === 'dividend' || ['buy', 'sell'].includes(replacementType) ? (
+              {replacementType === 'dividend' || replacementSecurityOperation ? (
                 <label>
                   {t.taxes}
                   <input name="taxes" inputMode="decimal" pattern="\d+(\.\d+)?" defaultValue="0" />
@@ -298,19 +247,25 @@ export function ReversalWorkflow({
               disabled={busy}
               onChange={(event) => setConfirmed(event.target.checked)}
             />
-            {t.confirm}
+            {t.reversalConfirmLabel}
           </label>
           {failure ? <p className="error-text">{failure.message}</p> : null}
           <button
             className="button"
-            disabled={busy || success || !confirmed || reason.trim().length < 8}
+            disabled={
+              busy ||
+              success ||
+              !confirmed ||
+              reason.trim().length < 8 ||
+              (withReplacement && replacementSecurityOperation && !replacementSecurityId)
+            }
           >
-            {t.submit}
+            {t.reversalSubmit}
           </button>
         </form>
       )}
       <a className="button secondary" href={`/${locale}/dashboard#transactions`}>
-        {t.back}
+        {t.reversalBackLink}
       </a>
     </div>
   );

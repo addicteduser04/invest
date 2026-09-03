@@ -1,6 +1,7 @@
 import { login } from '../auth-actions';
 import { asLocale, direction, getUi } from '@/lib/i18n';
-import { SiteNav } from '@/components/site-nav';
+import { PublicNav } from '@/components/public/public-nav';
+import { PublicFooter } from '@/components/public/public-footer';
 
 export default async function Login({
   params,
@@ -14,40 +15,37 @@ export default async function Login({
   const locale = asLocale(rawLocale);
   const t = getUi(locale);
   return (
-    <main className="app-shell auth-shell" dir={direction(locale)}>
-      <SiteNav locale={locale} />
-      <section className="auth-card">
-        <div className="auth-copy">
-          <p className="eyebrow">SaifInvest</p>
+    <main className="public-page" dir={direction(locale)}>
+      <PublicNav locale={locale} authenticated={false} />
+      <div className="auth-v2-page">
+        <section className="auth-v2-card">
+          <p className="public-eyebrow">{t.brand}</p>
           <h1>{t.loginTitle}</h1>
           <p>{t.notBroker}</p>
-        </div>
-        <form className="form" action={login}>
-          <input type="hidden" name="locale" value={locale} />
-          <label>
-            {t.email}
-            <input required name="email" type="email" autoComplete="email" />
-          </label>
-          <label>
-            {t.password}
-            <input required name="password" type="password" autoComplete="current-password" />
-          </label>
-          <button className="button" type="submit">
-            {t.signIn}
-          </button>
-          {error === 'credentials' ? (
-            <p className="error-text" role="alert">
-              {t.authInvalidCredentials}
-            </p>
-          ) : null}
-          <a className="text-link" href={`/${locale}/forgot-password`}>
-            {t.forgotPassword}
-          </a>
-          <a className="text-link" href={`/${locale}/register`}>
-            {t.createAccount}
-          </a>
-        </form>
-      </section>
+          <form className="auth-v2-form" action={login}>
+            <input type="hidden" name="locale" value={locale} />
+            <label>
+              {t.email}
+              <input required name="email" type="email" autoComplete="email" />
+            </label>
+            <label>
+              {t.password}
+              <input required name="password" type="password" autoComplete="current-password" />
+            </label>
+            <button type="submit">{t.signIn}</button>
+            {error === 'credentials' ? (
+              <p className="auth-v2-error" role="alert">
+                {t.authInvalidCredentials}
+              </p>
+            ) : null}
+            <div className="auth-v2-links">
+              <a href={`/${locale}/forgot-password`}>{t.forgotPassword}</a>
+              <a href={`/${locale}/register`}>{t.createAccount}</a>
+            </div>
+          </form>
+        </section>
+      </div>
+      <PublicFooter locale={locale} authenticated={false} />
     </main>
   );
 }

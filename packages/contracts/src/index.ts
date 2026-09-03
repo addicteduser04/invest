@@ -278,6 +278,16 @@ export const portfolioPerformanceSchema = z.object({
     .regex(/^-?\d+(?:\.\d+)?$/)
     .nullable(),
   points: z.array(performancePointSchema),
-  benchmark: z.object({ available: z.boolean(), label: z.string() }),
+  benchmark: z.object({
+    available: z.boolean(),
+    label: z.string(),
+    kind: z.literal('price_index'),
+    from: z.iso.date().nullable(),
+    to: z.iso.date().nullable(),
+    cumulativeReturn: z
+      .string()
+      .regex(/^-?\d+(?:\.\d+)?$/)
+      .nullable(),
+  }),
 });
 export type PortfolioPerformance = z.infer<typeof portfolioPerformanceSchema>;

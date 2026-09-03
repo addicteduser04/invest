@@ -92,7 +92,17 @@ async function loadReplayRows(
     )
     .eq('portfolio_id', portfolioId);
   if (error) throw error;
-  return (data ?? []) as ReplayRow[];
+  // PostgREST serializes numeric/bigint columns as JSON numbers, not strings; the exact-decimal
+  // arithmetic below requires real strings, so coerce at the boundary rather than trusting the cast.
+  return ((data ?? []) as ReplayRow[]).map((row) => ({
+    ...row,
+    quantity: row.quantity === null ? null : String(row.quantity),
+    unit_price: row.unit_price === null ? null : String(row.unit_price),
+    gross_amount: row.gross_amount === null ? null : String(row.gross_amount),
+    fees: String(row.fees),
+    taxes: String(row.taxes),
+    ledger_sequence: String(row.ledger_sequence),
+  }));
 }
 
 async function loadSecurities(
@@ -133,22 +143,85 @@ function latestPricesAsOf(rows: readonly PriceRow[], asOf: string) {
   return map;
 }
 
-async function hasMasiBenchmarkSeries(
+const pow10 = (scale: number) => 10n ** BigInt(scale);
+
+const decimalParts = (value: string) => {
+  const normalized = String(value).trim();
+  if (!/^\d+(?:\.\d+)?$/.test(normalized)) throw new Error('Invalid positive decimal');
+  const [whole = '0', fraction = ''] = normalized.split('.');
+  return { integer: BigInt(`${whole}${fraction}`), scale: fraction.length };
+};
+
+const decimalRatioMinusOne = (numerator: string, denominator: string, precision = 12) => {
+  const top = decimalParts(numerator);
+  const bottom = decimalParts(denominator);
+  if (bottom.integer <= 0n) throw new Error('Invalid benchmark denominator');
+  const scaledNumerator = top.integer * pow10(bottom.scale) * pow10(precision);
+  const scaledDenominator = bottom.integer * pow10(top.scale);
+  const ratioScaled = scaledNumerator / scaledDenominator;
+  const returnScaled = ratioScaled - pow10(precision);
+  const negative = returnScaled < 0n;
+  const digits = (negative ? -returnScaled : returnScaled).toString().padStart(precision + 1, '0');
+  const whole = digits.slice(0, -precision) || '0';
+  const fraction = digits.slice(-precision).replace(/0+$/, '');
+  return `${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`;
+};
+
+async function readMasiBenchmarkSeries(
   supabase: Awaited<ReturnType<typeof createClient>>,
   fromDate: string | null,
   toDate: string,
 ) {
-  const query = supabase
+  let query = supabase
     .from('market_index_history')
     .select('code,market_date,close_value')
     .eq('code', 'MASI')
     .lte('market_date', toDate)
-    .order('market_date', { ascending: true })
-    .limit(2);
-  if (fromDate) query.gte('market_date', fromDate);
+    .order('market_date', { ascending: true });
+  if (fromDate) query = query.gte('market_date', fromDate);
   const { data, error } = await query;
-  if (error) return false;
-  return ((data ?? []) as IndexHistoryRow[]).length >= 2;
+  if (error) {
+    return {
+      available: false,
+      label: 'MASI',
+      kind: 'price_index' as const,
+      from: null,
+      to: null,
+      cumulativeReturn: null,
+    };
+  }
+  const rows = (data ?? []) as IndexHistoryRow[];
+  const first = rows[0];
+  const last = rows.at(-1);
+  if (!first || !last || first.market_date === last.market_date) {
+    return {
+      available: false,
+      label: 'MASI',
+      kind: 'price_index' as const,
+      from: first?.market_date ?? null,
+      to: last?.market_date ?? null,
+      cumulativeReturn: null,
+    };
+  }
+  try {
+    return {
+      available: true,
+      label: 'MASI',
+      kind: 'price_index' as const,
+      from: first.market_date,
+      to: last.market_date,
+      cumulativeReturn: decimalRatioMinusOne(String(last.close_value), String(first.close_value)),
+    };
+  } catch {
+    return {
+      available: false,
+      label: 'MASI',
+      kind: 'price_index' as const,
+      from: first.market_date,
+      to: last.market_date,
+      cumulativeReturn: null,
+    };
+  }
 }
 
 export async function readPortfolioValuation(portfolioId: string, requestedAsOf?: Date) {
@@ -338,15 +411,16 @@ export async function readPortfolioPerformance(
   if (terminalPoint && terminalPoint.status !== 'missing' && terminalPoint.totalValue !== '0') {
     investorFlows.push({ date: toDate, amount: terminalPoint.totalValue });
   }
-  const benchmarkAvailable = await hasMasiBenchmarkSeries(ownership.supabase, fromDate, toDate);
+  const performanceFromDate = fromDate ?? dates[0] ?? null;
+  const benchmark = await readMasiBenchmarkSeries(ownership.supabase, performanceFromDate, toDate);
   const response = portfolioPerformanceSchema.parse({
     portfolioId,
-    from: fromDate ?? dates[0] ?? null,
+    from: performanceFromDate,
     to: toDate,
     twr: hasMissingValuation ? null : twr.twr,
     xirr: hasMissingValuation ? null : calculateXirr(investorFlows),
     points: mergedPoints,
-    benchmark: { available: benchmarkAvailable, label: 'MASI' },
+    benchmark,
   });
   return { ...ownership, performance: response };
 }

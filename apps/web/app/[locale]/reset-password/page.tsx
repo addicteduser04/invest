@@ -2,7 +2,8 @@ import { redirect } from 'next/navigation';
 import { updatePassword } from '../auth-actions';
 import { createClient } from '@/lib/supabase/server';
 import { asLocale, direction, getUi } from '@/lib/i18n';
-import { SiteNav } from '@/components/site-nav';
+import { PublicNav } from '@/components/public/public-nav';
+import { PublicFooter } from '@/components/public/public-footer';
 
 export default async function ResetPassword({
   params,
@@ -21,35 +22,34 @@ export default async function ResetPassword({
   } = await supabase.auth.getUser();
   if (!user) redirect(`/${locale}/login`);
   return (
-    <main className="app-shell auth-shell" dir={direction(locale)}>
-      <SiteNav locale={locale} authenticated />
-      <section className="auth-card">
-        <div className="auth-copy">
-          <p className="eyebrow">SaifInvest</p>
+    <main className="public-page" dir={direction(locale)}>
+      <PublicNav locale={locale} authenticated />
+      <div className="auth-v2-page">
+        <section className="auth-v2-card">
+          <p className="public-eyebrow">{t.brand}</p>
           <h1>{t.resetPassword}</h1>
-        </div>
-        <form className="form" action={updatePassword}>
-          <input type="hidden" name="locale" value={locale} />
-          <label>
-            {t.newPassword}
-            <input
-              required
-              name="password"
-              type="password"
-              minLength={10}
-              autoComplete="new-password"
-            />
-          </label>
-          <button className="button" type="submit">
-            {t.updatePassword}
-          </button>
-          {error === 'password' ? (
-            <p className="error-text" role="alert">
-              {t.passwordUpdateFailed}
-            </p>
-          ) : null}
-        </form>
-      </section>
+          <form className="auth-v2-form" action={updatePassword}>
+            <input type="hidden" name="locale" value={locale} />
+            <label>
+              {t.newPassword}
+              <input
+                required
+                name="password"
+                type="password"
+                minLength={10}
+                autoComplete="new-password"
+              />
+            </label>
+            <button type="submit">{t.updatePassword}</button>
+            {error === 'password' ? (
+              <p className="auth-v2-error" role="alert">
+                {t.passwordUpdateFailed}
+              </p>
+            ) : null}
+          </form>
+        </section>
+      </div>
+      <PublicFooter locale={locale} authenticated />
     </main>
   );
 }

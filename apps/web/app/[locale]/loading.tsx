@@ -1,9 +1,9 @@
 export default function Loading() {
   return (
-    <main className="app-shell loading-shell" aria-busy="true" aria-live="polite">
-      <div className="loading-bar" />
-      <div className="loading-hero" />
-      <div className="loading-grid">
+    <main className="loading-v2-shell" aria-busy="true" aria-live="polite">
+      <div className="loading-v2-bar" />
+      <div className="loading-v2-hero" />
+      <div className="loading-v2-grid">
         <div />
         <div />
         <div />

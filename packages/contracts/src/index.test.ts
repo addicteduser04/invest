@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   localizeError,
+  portfolioPerformanceSchema,
   portfolioStateSchema,
   portfolioValuationSchema,
   reversalInputSchema,
@@ -76,6 +77,27 @@ describe('shared contracts', () => {
     expect(portfolioStateSchema.parse(state).cash).toBe('0.3000000001');
     expect(portfolioStateSchema.safeParse({ ...state, cash: 0.3 }).success).toBe(false);
   });
+  it('keeps MASI benchmark returns explicit and typed as a price index', () => {
+    const performance = portfolioPerformanceSchema.parse({
+      portfolioId: '00000000-0000-4000-8000-000000000001',
+      from: '2026-01-02',
+      to: '2026-08-28',
+      twr: '0.12',
+      xirr: '0.11',
+      points: [],
+      benchmark: {
+        available: true,
+        label: 'MASI',
+        kind: 'price_index',
+        from: '2026-01-02',
+        to: '2026-08-28',
+        cumulativeReturn: '0.08',
+      },
+    });
+    expect(performance.benchmark.cumulativeReturn).toBe('0.08');
+    expect(performance.benchmark.kind).toBe('price_index');
+  });
+
   it('keeps valuation, dividends and expenses as exact decimal strings', () => {
     const value = portfolioValuationSchema.parse({
       portfolioId: '00000000-0000-4000-8000-000000000001',

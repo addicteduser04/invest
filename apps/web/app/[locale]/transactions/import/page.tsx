@@ -1,24 +1,9 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import { asLocale, direction } from '@/lib/i18n';
-import { SiteNav } from '@/components/site-nav';
+import { asLocale, direction, getUi } from '@/lib/i18n';
+import { PublicNav } from '@/components/public/public-nav';
+import { PublicFooter } from '@/components/public/public-footer';
 import { ImportWorkflow } from './import-workflow';
-
-const copy = {
-  en: {
-    title: 'Import transactions from CSV',
-    notice: 'Previewing does not create transactions. Confirmation is atomic after validation.',
-  },
-  fr: {
-    title: 'Importer des opérations CSV',
-    notice:
-      'La prévisualisation ne crée aucune opération. La confirmation est entièrement atomique après validation.',
-  },
-  ar: {
-    title: 'استيراد عمليات CSV',
-    notice: 'المعاينة لا تنشئ أي عملية. يتم التأكيد دفعة واحدة فقط بعد نجاح التحقق.',
-  },
-} as const;
 
 export default async function TransactionImportPage({
   params,
@@ -27,6 +12,7 @@ export default async function TransactionImportPage({
 }) {
   const { locale: rawLocale } = await params;
   const locale = asLocale(rawLocale);
+  const t = getUi(locale);
   const supabase = await createClient();
   const {
     data: { user },
@@ -38,13 +24,19 @@ export default async function TransactionImportPage({
     .eq('status', 'active')
     .order('created_at');
   return (
-    <main className="app-shell" dir={direction(locale)}>
-      <SiteNav locale={locale} authenticated />
-      <section className="card" style={{ marginTop: 40 }}>
-        <h1>{copy[locale].title}</h1>
-        <p className="notice">{copy[locale].notice}</p>
+    <main className="public-page admin-v2-page" dir={direction(locale)}>
+      <PublicNav locale={locale} authenticated />
+      <div className="admin-v2-hero">
+        <div>
+          <p className="public-eyebrow">{t.transactions}</p>
+          <h1>{t.importTransactionsTitle}</h1>
+        </div>
+      </div>
+      <p className="admin-v2-notice">{t.importTransactionsNotice}</p>
+      <div className="admin-v2-body">
         <ImportWorkflow locale={locale} portfolios={portfolios ?? []} />
-      </section>
+      </div>
+      <PublicFooter locale={locale} authenticated />
     </main>
   );
 }

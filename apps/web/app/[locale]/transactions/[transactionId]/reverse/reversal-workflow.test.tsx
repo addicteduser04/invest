@@ -24,7 +24,7 @@ const transaction: ReversalTransaction = {
 describe('localized reversal workflow', () => {
   it('renders the accessible French correction form and immutable-history warning', () => {
     const html = renderToStaticMarkup(
-      createElement(ReversalWorkflow, { locale: 'fr', transaction }),
+      createElement(ReversalWorkflow, { locale: 'fr', transaction, securities: [] }),
     );
     expect(html).toContain('L’opération originale restera définitivement');
     expect(html).toContain('Motif détaillé de l’annulation');
@@ -34,7 +34,7 @@ describe('localized reversal workflow', () => {
 
   it('renders the English immutable correction workflow', () => {
     const html = renderToStaticMarkup(
-      createElement(ReversalWorkflow, { locale: 'en', transaction }),
+      createElement(ReversalWorkflow, { locale: 'en', transaction, securities: [] }),
     );
     expect(html).toContain('The original transaction remains permanently in history');
     expect(html).toContain('Detailed reversal reason');
@@ -42,7 +42,7 @@ describe('localized reversal workflow', () => {
 
   it('renders Arabic labels while isolating financial values in LTR', () => {
     const html = renderToStaticMarkup(
-      createElement(ReversalWorkflow, { locale: 'ar', transaction }),
+      createElement(ReversalWorkflow, { locale: 'ar', transaction, securities: [] }),
     );
     expect(html).toContain('ستبقى العملية الأصلية محفوظة دائماً');
     expect(html).toContain('السبب المفصل للعكس');

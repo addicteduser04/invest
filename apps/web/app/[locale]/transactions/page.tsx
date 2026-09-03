@@ -2,7 +2,9 @@ import { redirect } from 'next/navigation';
 import type { Locale } from '@bvc/contracts';
 import { createClient } from '@/lib/supabase/server';
 import { asLocale, direction, getUi } from '@/lib/i18n';
-import { SiteNav } from '@/components/site-nav';
+import { MarketTicker, type TickerItem } from '@/components/public/market-ticker';
+import { PublicNav } from '@/components/public/public-nav';
+import { PublicFooter } from '@/components/public/public-footer';
 
 const PAGE_SIZE = 50;
 
@@ -67,6 +69,21 @@ export default async function TransactionsPage({
   let transactions: Record<string, unknown>[] = [];
   let count = 0;
   let securityLabels = new Map<string, string>();
+  const { data: tickerSecurities } = await supabase
+    .from('market_security_overview')
+    .select('id,ticker,name,latest_close_price,daily_change_percent')
+    .eq('listing_status', 'active')
+    .order('ticker');
+  const { data: tickerIndices } = await supabase
+    .from('market_index_overview')
+    .select('id,code,name,latest_close_value,daily_change_percent')
+    .in('code', ['MASI', 'MSI20', 'ESGI', 'MASIMS'])
+    .order('code');
+  const tickerItems = buildTickerItems(
+    locale,
+    (tickerIndices ?? []) as MarketIndex[],
+    (tickerSecurities ?? []) as MarketSecurity[],
+  );
   if (selected) {
     let query = supabase
       .from('transactions')
@@ -107,27 +124,31 @@ export default async function TransactionsPage({
   };
 
   return (
-    <main className="app-shell" dir={direction(locale)}>
-      <SiteNav locale={locale} authenticated />
-      <div className="page-heading">
+    <main className="public-page transactions-v2-page" dir={direction(locale)}>
+      <PublicNav locale={locale} authenticated />
+      <MarketTicker locale={locale} items={tickerItems} />
+      <section className="transactions-v2-hero compact">
         <div>
-          <p className="eyebrow">{t.transactions}</p>
+          <p className="public-eyebrow">{t.transactions}</p>
           <h1>{t.transactionHistory}</h1>
-          <p className="lead compact-lead">{t.transactionHistoryHint}</p>
+          <p>{t.transactionHistoryHint}</p>
         </div>
-        {selected ? (
-          <a
-            className="button secondary compact"
-            href={`/api/portfolios/${selected.id}/transactions/export`}
-          >
-            {t.exportCsv}
-          </a>
-        ) : null}
-      </div>
+        <div className="transactions-v2-hero-actions">
+          {selected ? (
+            <>
+              <a href={`/${locale}/transactions/new?portfolio=${selected.id}`}>
+                {t.recordTransaction}
+              </a>
+              <a href={`/api/portfolios/${selected.id}/transactions/export`}>{t.exportCsv}</a>
+              <a href={`/${locale}/transactions/import`}>{t.import}</a>
+            </>
+          ) : null}
+        </div>
+      </section>
 
       {selected ? (
         <>
-          <form className="filter-bar transaction-filters" method="get">
+          <form className="transactions-v2-filters" method="get">
             <label>
               <span className="sr-only">{t.portfolioTitle}</span>
               <select name="portfolio" defaultValue={selected.id}>
@@ -152,102 +173,131 @@ export default async function TransactionsPage({
                 )}
               </select>
             </label>
-            <button className="button compact" type="submit">
-              {t.search}
-            </button>
+            <button type="submit">{t.search}</button>
           </form>
 
-          <section className="card transaction-history-card">
+          <section className="transactions-v2-history">
             {transactions.length ? (
-              <div className="table-scroll">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>{t.date}</th>
-                      <th>{t.type}</th>
-                      <th>{t.security}</th>
-                      <th>{t.quantity}</th>
-                      <th>{t.unitPrice}</th>
-                      <th>{t.amount}</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {transactions.map((row) => (
-                      <tr key={String(row.id)}>
-                        <td>{String(row.settlement_date)}</td>
-                        <td>
-                          <span className="transaction-type">
-                            {labelForType(
-                              String(row.transaction_type),
-                              locale,
-                              selected.tracking_mode,
-                            )}
-                          </span>
-                        </td>
-                        <td>
-                          {row.security_id
-                            ? (securityLabels.get(String(row.security_id)) ?? '—')
-                            : '—'}
-                        </td>
-                        <td className="technical" dir="ltr">
-                          {row.quantity ? String(row.quantity) : '—'}
-                        </td>
-                        <td className="technical" dir="ltr">
-                          {row.unit_price ? money(String(row.unit_price), locale) : '—'}
-                        </td>
-                        <td className="technical" dir="ltr">
-                          {money(row.net_amount ? String(row.net_amount) : null, locale)}
-                        </td>
-                        <td>
-                          {row.transaction_type !== 'reversal' && selected.status === 'active' ? (
-                            <a
-                              className="text-link"
-                              href={`/${locale}/transactions/${String(row.id)}/reverse`}
-                            >
-                              {t.correction}
-                            </a>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="transactions-v2-table">
+                <div className="transactions-v2-table-head">
+                  <span>{t.type}</span>
+                  <span>{t.security}</span>
+                  <span>{t.date}</span>
+                  <span>{t.quantity}</span>
+                  <span>{t.amount}</span>
+                  <span>{t.fees}</span>
+                  <span>{t.taxes}</span>
+                  <span>{t.correction}</span>
+                </div>
+                {transactions.map((row) => (
+                  <div className="transactions-v2-row" key={String(row.id)}>
+                    <span>
+                      <strong>
+                        {labelForType(String(row.transaction_type), locale, selected.tracking_mode)}
+                      </strong>
+                      {row.reverses_transaction_id ? <small>{t.reversal}</small> : null}
+                    </span>
+                    <span className="technical transactions-v2-ticker" dir="ltr">
+                      {row.security_id ? (securityLabels.get(String(row.security_id)) ?? '—') : '—'}
+                    </span>
+                    <span className="technical" dir="ltr">
+                      {String(row.settlement_date)}
+                    </span>
+                    <span className="technical" dir="ltr">
+                      {row.quantity ? String(row.quantity) : '—'}
+                    </span>
+                    <span
+                      className={`technical ${Number(row.net_amount ?? 0) >= 0 ? 'positive' : 'negative'}`}
+                      dir="ltr"
+                    >
+                      {money(row.net_amount ? String(row.net_amount) : null, locale)}
+                    </span>
+                    <span className="technical" dir="ltr">
+                      {money(row.fees ? String(row.fees) : '0', locale)}
+                    </span>
+                    <span className="technical" dir="ltr">
+                      {money(row.taxes ? String(row.taxes) : '0', locale)}
+                    </span>
+                    <span>
+                      {row.transaction_type !== 'reversal' && selected.status === 'active' ? (
+                        <a href={`/${locale}/transactions/${String(row.id)}/reverse`}>
+                          {t.correction}
+                        </a>
+                      ) : (
+                        '—'
+                      )}
+                    </span>
+                  </div>
+                ))}
               </div>
             ) : (
-              <p className="empty-state">{t.noTransactions}</p>
+              <div className="transactions-v2-empty">
+                <p>{t.noTransactions}</p>
+                <a href={`/${locale}/transactions/new?portfolio=${selected.id}`}>
+                  {t.recordDeposit}
+                </a>
+              </div>
             )}
           </section>
 
           {totalPages > 1 ? (
-            <nav className="pagination" aria-label={t.transactionHistory}>
-              {page > 1 ? (
-                <a className="button secondary compact" href={hrefForPage(page - 1)}>
-                  {t.previousPage}
-                </a>
-              ) : (
-                <span />
-              )}
+            <nav className="transactions-v2-pagination" aria-label={t.transactionHistory}>
+              {page > 1 ? <a href={hrefForPage(page - 1)}>{t.previousPage}</a> : <span />}
               <span className="technical" dir="ltr">
                 {page} / {totalPages}
               </span>
-              {page < totalPages ? (
-                <a className="button secondary compact" href={hrefForPage(page + 1)}>
-                  {t.nextPage}
-                </a>
-              ) : (
-                <span />
-              )}
+              {page < totalPages ? <a href={hrefForPage(page + 1)}>{t.nextPage}</a> : <span />}
             </nav>
           ) : null}
         </>
       ) : (
-        <section className="card">
-          <p className="empty-state">{t.createPortfolio}</p>
+        <section className="transactions-v2-empty">
+          <p>{t.createPortfolio}</p>
+          <a href={`/${locale}/dashboard`}>{t.createPortfolio}</a>
         </section>
       )}
+      <PublicFooter locale={locale} authenticated />
     </main>
   );
+}
+
+interface MarketSecurity {
+  id: string;
+  ticker: string;
+  name: string;
+  latest_close_price: string | null;
+  daily_change_percent: string | number | null;
+}
+
+interface MarketIndex {
+  id: string;
+  code: string;
+  name: string;
+  latest_close_value: string | null;
+  daily_change_percent: string | number | null;
+}
+
+function buildTickerItems(locale: Locale, indices: MarketIndex[], securities: MarketSecurity[]) {
+  const indexItems: TickerItem[] = indices.map((index) => ({
+    id: index.id,
+    ticker: index.code,
+    name: index.name,
+    href: `/${locale}/market`,
+    price: index.latest_close_value,
+    changePercent: index.daily_change_percent,
+    kind: 'index',
+  }));
+  const securityItems = securities
+    .filter((security) => security.latest_close_price !== null)
+    .slice(0, 10)
+    .map<TickerItem>((security) => ({
+      id: security.id,
+      ticker: security.ticker,
+      name: security.name,
+      href: `/${locale}/market/${security.id}`,
+      price: security.latest_close_price,
+      changePercent: security.daily_change_percent,
+      kind: 'security',
+    }));
+  return [...indexItems, ...securityItems];
 }
