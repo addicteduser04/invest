@@ -7,7 +7,9 @@ import { MarketTicker, type TickerItem } from '@/components/public/market-ticker
 import { PublicNav } from '@/components/public/public-nav';
 import { PublicFooter } from '@/components/public/public-footer';
 import { SecurityFundamentalsSection } from '@/components/security-fundamentals-section';
+import { SecurityValuationSection } from '@/components/security-valuation-section';
 import { readSecurityFundamentals } from '@/lib/fundamentals-read';
+import { readValuationSnapshots } from '@/lib/valuation-read';
 
 type PeriodKey = '1M' | '3M' | 'YTD' | '1Y' | '3Y';
 
@@ -166,6 +168,11 @@ export default async function SecurityPage({
   const security = securityResult.data as SecurityRow | null;
   if (!security) notFound();
 
+  const valuationMap = await readValuationSnapshots([
+    { id: security.id, latestPrice: security.latest_close_price, priceDate: security.latest_market_date },
+  ]);
+  const valuation = valuationMap.get(security.id)!;
+
   const history = ((historyResult.data ?? []) as HistoryRow[]).reverse();
   const indices = (indicesResult.data ?? []) as IndexRow[];
   const masiHistory = (masiHistoryResult.data ?? []) as IndexHistoryRow[];
@@ -320,6 +327,10 @@ export default async function SecurityPage({
       </section>
 
       <SecurityFundamentalsSection locale={locale} fundamentals={fundamentals} />
+
+      <section className="security-v2-fundamentals">
+        <SecurityValuationSection locale={locale} valuation={valuation} />
+      </section>
 
       <section className="security-v2-info">
         <div>

@@ -1004,12 +1004,62 @@ body {
 .stocks-v2-sector-chips.overflow {
   margin-top: 10px;
 }
+.stocks-v2-more-filters {
+  flex-basis: 100%;
+  margin-top: 14px;
+}
+.stocks-v2-filter-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1px;
+  margin-top: 10px;
+  background: rgba(9, 24, 21, 0.16);
+}
+.stocks-v2-filter-groups fieldset {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 0;
+  background: #ece9df;
+}
+.stocks-v2-filter-groups legend {
+  padding: 0 0 2px;
+  color: rgba(9, 24, 21, 0.52);
+  font-size: 0.68rem;
+  font-weight: 820;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.stocks-v2-filter-groups label {
+  display: grid;
+  gap: 4px;
+}
+.stocks-v2-filter-groups label > span {
+  color: rgba(9, 24, 21, 0.52);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.stocks-v2-filter-groups input {
+  min-width: 0;
+  border: 1px solid rgba(9, 24, 21, 0.18);
+  border-radius: 4px;
+  padding: 7px 9px;
+  background: #fff;
+  color: #071917;
+}
+.stocks-v2-more-filters > button {
+  margin-top: 10px;
+  padding: 10px 20px;
+  border: 0;
+  background: #071917;
+  color: #f7f5ee;
+  font-weight: 850;
+  cursor: pointer;
+}
 .stocks-v2-filters {
   min-height: 58px;
   display: grid;
-  grid-template-columns:
-    minmax(220px, 1fr) minmax(140px, 0.4fr) minmax(120px, 0.34fr) minmax(150px, 0.4fr)
-    auto auto;
+  grid-template-columns: minmax(200px, 1.4fr) repeat(6, minmax(120px, 1fr)) auto;
   gap: 1px;
   align-items: stretch;
   margin-bottom: 18px;
@@ -1145,6 +1195,27 @@ body {
   text-align: end;
   color: rgba(9, 24, 21, 0.72);
 }
+/* Optional fundamentals/valuation column groups -- the default (no group selected) uses the
+   original 8-column template above, unchanged. Selecting a group swaps in that group's extra
+   columns in place of volume/sparkline/last-session, rather than appending to an already-full
+   row, so the table stays a deliberate, bounded column count instead of growing unbounded. */
+.stocks-v2-table.cols-valuation .stocks-v2-table-head,
+.stocks-v2-table.cols-valuation .stocks-v2-row {
+  grid-template-columns: 82px minmax(160px, 1fr) repeat(8, minmax(80px, 0.4fr));
+}
+.stocks-v2-table.cols-growth .stocks-v2-table-head,
+.stocks-v2-table.cols-growth .stocks-v2-row,
+.stocks-v2-table.cols-quality .stocks-v2-table-head,
+.stocks-v2-table.cols-quality .stocks-v2-row {
+  grid-template-columns: 82px minmax(160px, 1fr) repeat(6, minmax(85px, 0.42fr));
+}
+.stocks-v2-table.cols-balance .stocks-v2-table-head,
+.stocks-v2-table.cols-balance .stocks-v2-row {
+  grid-template-columns: 82px minmax(160px, 1fr) repeat(5, minmax(90px, 0.42fr));
+}
+.stocks-v2-mobile-metrics {
+  display: none;
+}
 .stocks-v2-empty {
   margin: 0;
   padding: 32px 0;
@@ -1195,7 +1266,8 @@ body {
   .stocks-v2-sector,
   .stocks-v2-volume,
   .stocks-v2-session,
-  .stocks-v2-row .mini-sparkline {
+  .stocks-v2-row .mini-sparkline,
+  .stocks-v2-extra {
     display: none;
   }
   .stocks-v2-number,
@@ -1207,6 +1279,29 @@ body {
     display: flex;
     align-items: baseline;
     gap: 8px;
+  }
+  /* Mobile keeps a fixed, always-useful trio (P/E, ROE, revenue growth) instead of whichever
+     desktop column group happens to be selected -- a 12-column table never belongs on a phone. */
+  .stocks-v2-mobile-metrics {
+    display: flex;
+    grid-column: 2;
+    gap: 16px;
+    margin-top: 2px;
+  }
+  .stocks-v2-mobile-metrics span {
+    display: grid;
+    gap: 2px;
+  }
+  .stocks-v2-mobile-metrics small {
+    color: rgba(9, 24, 21, 0.5);
+    font-size: 0.62rem;
+    font-weight: 760;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .stocks-v2-mobile-metrics b {
+    font-size: 0.8rem;
+    font-weight: 800;
   }
 }
 .compare-v2-page {

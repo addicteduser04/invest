@@ -5,8 +5,21 @@ import { MarketTicker, type TickerItem } from '@/components/public/market-ticker
 import { PublicNav } from '@/components/public/public-nav';
 import { PublicFooter } from '@/components/public/public-footer';
 import { MiniSparkline, formatMoney } from '@/components/public/home-market-sections';
+import { readValuationSnapshots } from '@/lib/valuation-read';
+import {
+  COLUMN_GROUPS,
+  SORT_MODES,
+  hasAnyValuationFilter,
+  matchesValuationFilters,
+  parseFilterNumber,
+  priorityRank,
+  sortSecurities,
+  type ColumnGroup,
+  type SortDirection,
+  type SortMode,
+  type ValuationFilters,
+} from '@/lib/stocks-screener';
 
-type SortMode = 'ticker' | 'name' | 'price' | 'change' | 'volume';
 type MovementFilter = 'all' | 'gainers' | 'losers';
 
 interface SecurityRow {
@@ -38,32 +51,91 @@ interface PriceHistoryRow {
   volume: string | null;
 }
 
+interface RawFilters {
+  q?: string | undefined;
+  sector?: string | undefined;
+  sort?: string | undefined;
+  direction?: string | undefined;
+  priced?: string | undefined;
+  move?: string | undefined;
+  cols?: string | undefined;
+  peMax?: string | undefined;
+  pbMax?: string | undefined;
+  evEbitdaMax?: string | undefined;
+  divYieldMin?: string | undefined;
+  revGrowthMin?: string | undefined;
+  epsGrowthMin?: string | undefined;
+  netMarginMin?: string | undefined;
+  roeMin?: string | undefined;
+  debtEquityMax?: string | undefined;
+  hasFundamentals?: string | undefined;
+  hasValuation?: string | undefined;
+}
+
 export default async function StocksPage({
   params,
   searchParams,
 }: {
   params: Promise<{ locale: string }>;
-  searchParams: Promise<{
-    q?: string;
-    sector?: string;
-    sort?: string;
-    priced?: string;
-    move?: string;
-  }>;
+  searchParams: Promise<RawFilters>;
 }) {
   const { locale: rawLocale } = await params;
   const locale = asLocale(rawLocale);
   const t = getUi(locale);
   const filters = await searchParams;
   const sort: SortMode = (
-    ['name', 'price', 'change', 'volume'].includes(filters.sort ?? '') ? filters.sort : 'ticker'
+    SORT_MODES.includes(filters.sort as SortMode) ? filters.sort : 'ticker'
   ) as SortMode;
+  const sortDirection: SortDirection = filters.direction === 'asc' ? 'asc' : 'desc';
   const movement: MovementFilter = (
     ['gainers', 'losers'].includes(filters.move ?? '') ? filters.move : 'all'
   ) as MovementFilter;
+  const columnGroup: ColumnGroup = (
+    COLUMN_GROUPS.includes(filters.cols as ColumnGroup) ? filters.cols : 'none'
+  ) as ColumnGroup;
   const selectedSector = filters.sector ?? '';
   const pricedOnly = filters.priced === '1';
+  const hasFundamentalsOnly = filters.hasFundamentals === '1';
+  const hasValuationOnly = filters.hasValuation === '1';
   const query = (filters.q ?? '').trim().toLowerCase();
+
+  const valuationFilters: ValuationFilters = {
+    hasFundamentalsOnly,
+    hasValuationOnly,
+    peMax: parseFilterNumber(filters.peMax),
+    pbMax: parseFilterNumber(filters.pbMax),
+    evEbitdaMax: parseFilterNumber(filters.evEbitdaMax),
+    divYieldMin: parseFilterNumber(filters.divYieldMin),
+    revGrowthMin: parseFilterNumber(filters.revGrowthMin),
+    epsGrowthMin: parseFilterNumber(filters.epsGrowthMin),
+    netMarginMin: parseFilterNumber(filters.netMarginMin),
+    roeMin: parseFilterNumber(filters.roeMin),
+    debtEquityMax: parseFilterNumber(filters.debtEquityMax),
+  };
+  const hasValuationFilters = hasAnyValuationFilter(valuationFilters);
+
+  // Carries every current filter/sort param through sector-chip and pagination-style links.
+  const currentFilterState: RawFilters = {
+    q: filters.q,
+    sector: filters.sector,
+    sort: filters.sort,
+    direction: filters.direction,
+    priced: filters.priced,
+    move: filters.move,
+    cols: filters.cols,
+    peMax: filters.peMax,
+    pbMax: filters.pbMax,
+    evEbitdaMax: filters.evEbitdaMax,
+    divYieldMin: filters.divYieldMin,
+    revGrowthMin: filters.revGrowthMin,
+    epsGrowthMin: filters.epsGrowthMin,
+    netMarginMin: filters.netMarginMin,
+    roeMin: filters.roeMin,
+    debtEquityMax: filters.debtEquityMax,
+    hasFundamentals: filters.hasFundamentals,
+    hasValuation: filters.hasValuation,
+  };
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -111,7 +183,7 @@ export default async function StocksPage({
     (security) => security.latest_close_price !== null,
   ).length;
 
-  const filteredSecurities = allSecurities.filter((security) => {
+  const coreFilteredSecurities = allSecurities.filter((security) => {
     const matchesQuery =
       !query ||
       security.ticker.toLowerCase().includes(query) ||
@@ -129,6 +201,22 @@ export default async function StocksPage({
     return matchesQuery && matchesSector && matchesAvailability && matchesMovement;
   });
 
+  // One batched read for however many securities matched the core filters -- never one query
+  // per security. Mobile always needs P/E, ROE and revenue growth regardless of which desktop
+  // column group is selected, so valuation data is always fetched, not just when filtering/
+  // sorting by it.
+  const valuationMap = await readValuationSnapshots(
+    coreFilteredSecurities.map((security) => ({
+      id: security.id,
+      latestPrice: security.latest_close_price,
+      priceDate: security.latest_market_date,
+    })),
+  );
+
+  const filteredSecurities = coreFilteredSecurities.filter((security) =>
+    matchesValuationFilters(valuationMap.get(security.id), valuationFilters),
+  );
+
   const selectedIds = filteredSecurities.map((security) => security.id);
   const { data: priceRows } = selectedIds.length
     ? await supabase
@@ -138,8 +226,17 @@ export default async function StocksPage({
         .order('market_date', { ascending: true })
     : { data: [] };
   const priceHistory = groupPriceHistory((priceRows ?? []) as PriceHistoryRow[]);
+  const volumeBySecurity = new Map(
+    [...priceHistory].map(([id, entry]) => [id, entry.latestVolume]),
+  );
 
-  const visibleSecurities = sortSecurities(filteredSecurities, sort, priceHistory);
+  const visibleSecurities = sortSecurities(
+    filteredSecurities,
+    sort,
+    sortDirection,
+    volumeBySecurity,
+    valuationMap,
+  );
   const tickerItems = buildTickerItems(locale, indices, allSecurities);
 
   return (
@@ -171,13 +268,7 @@ export default async function StocksPage({
           <div className="stocks-v2-sector-chips">
             <a
               className={selectedSector ? '' : 'active'}
-              href={buildFilterHref(locale, {
-                q: filters.q,
-                sector: undefined,
-                sort: filters.sort,
-                priced: filters.priced,
-                move: filters.move,
-              })}
+              href={buildFilterHref(locale, { ...currentFilterState, sector: undefined })}
             >
               {t.allSectorsChip} <b>{allSecurities.length}</b>
             </a>
@@ -185,13 +276,7 @@ export default async function StocksPage({
               <a
                 key={sector}
                 className={selectedSector === sector ? 'active' : ''}
-                href={buildFilterHref(locale, {
-                  q: filters.q,
-                  sector,
-                  sort: filters.sort,
-                  priced: filters.priced,
-                  move: filters.move,
-                })}
+                href={buildFilterHref(locale, { ...currentFilterState, sector })}
               >
                 {sector} <b>{sectorCounts.get(sector)}</b>
               </a>
@@ -209,13 +294,7 @@ export default async function StocksPage({
                     <a
                       key={sector}
                       className={selectedSector === sector ? 'active' : ''}
-                      href={buildFilterHref(locale, {
-                        q: filters.q,
-                        sector,
-                        sort: filters.sort,
-                        priced: filters.priced,
-                        move: filters.move,
-                      })}
+                      href={buildFilterHref(locale, { ...currentFilterState, sector })}
                     >
                       {sector} <b>{sectorCounts.get(sector)}</b>
                     </a>
@@ -270,6 +349,33 @@ export default async function StocksPage({
               <option value="price">{t.sortPrice}</option>
               <option value="change">{t.sortChange}</option>
               <option value="volume">{t.sortVolume}</option>
+              <option value="marketCap">{t.screenerSortMarketCap}</option>
+              <option value="pe">{t.screenerSortPe}</option>
+              <option value="pb">{t.screenerSortPb}</option>
+              <option value="evEbitda">{t.screenerSortEvEbitda}</option>
+              <option value="dividendYield">{t.screenerSortDividendYield}</option>
+              <option value="revenueGrowth">{t.screenerSortRevenueGrowth}</option>
+              <option value="epsGrowth">{t.screenerSortEpsGrowth}</option>
+              <option value="netMargin">{t.screenerSortNetMargin}</option>
+              <option value="roe">{t.screenerSortRoe}</option>
+              <option value="debtEquity">{t.screenerSortDebtEquity}</option>
+            </select>
+          </label>
+          <label>
+            <span>{t.screenerMoreColumns}</span>
+            <select name="cols" defaultValue={columnGroup}>
+              <option value="none">{t.screenerColumnGroupCore}</option>
+              <option value="valuation">{t.screenerColumnGroupValuation}</option>
+              <option value="growth">{t.screenerColumnGroupGrowth}</option>
+              <option value="quality">{t.screenerColumnGroupQuality}</option>
+              <option value="balance">{t.screenerColumnGroupBalanceSheet}</option>
+            </select>
+          </label>
+          <label>
+            <span>{t.screenerSortDirection}</span>
+            <select name="direction" defaultValue={sortDirection}>
+              <option value="desc">{t.screenerSortDescending}</option>
+              <option value="asc">{t.screenerSortAscending}</option>
             </select>
           </label>
           <label className="stocks-v2-check">
@@ -277,18 +383,181 @@ export default async function StocksPage({
             <span>{t.pricedOnly}</span>
           </label>
           <button type="submit">{t.searchShort}</button>
+
+          <details
+            className="stocks-v2-sector-more stocks-v2-more-filters"
+            open={hasValuationFilters || undefined}
+          >
+            <summary>{t.screenerFundamentalsColumns}</summary>
+            <div className="stocks-v2-filter-groups">
+              <fieldset>
+                <legend>{t.screenerFiltersValuation}</legend>
+                <label>
+                  <span>{t.screenerPeMax}</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    name="peMax"
+                    defaultValue={filters.peMax ?? ''}
+                    placeholder="15"
+                  />
+                </label>
+                <label>
+                  <span>{t.screenerPbMax}</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    name="pbMax"
+                    defaultValue={filters.pbMax ?? ''}
+                    placeholder="3"
+                  />
+                </label>
+                <label>
+                  <span>{t.screenerEvEbitdaMax}</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    name="evEbitdaMax"
+                    defaultValue={filters.evEbitdaMax ?? ''}
+                    placeholder="10"
+                  />
+                </label>
+                <label>
+                  <span>{t.screenerDividendYieldMin}</span>
+                  <input
+                    type="number"
+                    step="0.001"
+                    name="divYieldMin"
+                    defaultValue={filters.divYieldMin ?? ''}
+                    placeholder="0.03"
+                  />
+                </label>
+              </fieldset>
+              <fieldset>
+                <legend>{t.screenerFiltersGrowth}</legend>
+                <label>
+                  <span>{t.screenerRevenueGrowthMin}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    name="revGrowthMin"
+                    defaultValue={filters.revGrowthMin ?? ''}
+                    placeholder="0.05"
+                  />
+                </label>
+                <label>
+                  <span>{t.screenerEpsGrowthMin}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    name="epsGrowthMin"
+                    defaultValue={filters.epsGrowthMin ?? ''}
+                    placeholder="0.05"
+                  />
+                </label>
+              </fieldset>
+              <fieldset>
+                <legend>{t.screenerFiltersQuality}</legend>
+                <label>
+                  <span>{t.screenerNetMarginMin}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    name="netMarginMin"
+                    defaultValue={filters.netMarginMin ?? ''}
+                    placeholder="0.1"
+                  />
+                </label>
+                <label>
+                  <span>{t.screenerRoeMin}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    name="roeMin"
+                    defaultValue={filters.roeMin ?? ''}
+                    placeholder="0.12"
+                  />
+                </label>
+              </fieldset>
+              <fieldset>
+                <legend>{t.screenerFiltersRisk}</legend>
+                <label>
+                  <span>{t.screenerDebtEquityMax}</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    name="debtEquityMax"
+                    defaultValue={filters.debtEquityMax ?? ''}
+                    placeholder="1"
+                  />
+                </label>
+                <label className="stocks-v2-check">
+                  <input
+                    type="checkbox"
+                    name="hasFundamentals"
+                    value="1"
+                    defaultChecked={hasFundamentalsOnly}
+                  />
+                  <span>{t.screenerHasFundamentals}</span>
+                </label>
+                <label className="stocks-v2-check">
+                  <input
+                    type="checkbox"
+                    name="hasValuation"
+                    value="1"
+                    defaultChecked={hasValuationOnly}
+                  />
+                  <span>{t.screenerHasValuation}</span>
+                </label>
+              </fieldset>
+            </div>
+            <button type="submit">{t.searchShort}</button>
+          </details>
         </form>
 
-        <div className="stocks-v2-table">
+        <div className={`stocks-v2-table cols-${columnGroup}`}>
           <div className="stocks-v2-table-head">
             <span>{t.ticker}</span>
             <span>{t.company}</span>
             <span>{t.sector}</span>
             <span>{t.latestPrice}</span>
             <span>{t.dailyChange}</span>
-            <span>{t.volume}</span>
-            <span>{t.priceHistory}</span>
-            <span>{t.lastSession}</span>
+            {columnGroup === 'none' ? (
+              <>
+                <span>{t.volume}</span>
+                <span>{t.priceHistory}</span>
+                <span>{t.lastSession}</span>
+              </>
+            ) : null}
+            {columnGroup === 'valuation' ? (
+              <>
+                <span>{t.screenerMarketCap}</span>
+                <span>{t.screenerPe}</span>
+                <span>{t.screenerPb}</span>
+                <span>{t.screenerEvEbitda}</span>
+                <span>{t.screenerDividendYield}</span>
+              </>
+            ) : null}
+            {columnGroup === 'growth' ? (
+              <>
+                <span>{t.screenerRevenueGrowth}</span>
+                <span>{t.screenerEbitdaGrowth}</span>
+                <span>{t.screenerEpsGrowth}</span>
+              </>
+            ) : null}
+            {columnGroup === 'quality' ? (
+              <>
+                <span>{t.screenerEbitdaMargin}</span>
+                <span>{t.screenerNetMargin}</span>
+                <span>{t.screenerRoe}</span>
+              </>
+            ) : null}
+            {columnGroup === 'balance' ? (
+              <>
+                <span>{t.screenerDebtEquity}</span>
+                <span>{t.screenerNetDebt}</span>
+              </>
+            ) : null}
           </div>
           {visibleSecurities.length ? (
             visibleSecurities.map((security) => {
@@ -297,6 +566,7 @@ export default async function StocksPage({
                 security.previous_close_price,
               );
               const volume = priceHistory.get(security.id)?.latestVolume ?? null;
+              const v = valuationMap.get(security.id);
               return (
                 <a
                   className="stocks-v2-row"
@@ -325,11 +595,105 @@ export default async function StocksPage({
                     <b>{formatPercent(security.daily_change_percent)}</b>
                     <em>{formatAbsolute(absoluteChange, locale)}</em>
                   </span>
-                  <span className="technical stocks-v2-volume" dir="ltr">
-                    {formatVolume(volume, locale)}
-                  </span>
-                  <MiniSparkline points={priceHistory.get(security.id)?.points ?? []} />
-                  <span className="stocks-v2-session">{security.latest_market_date ?? '—'}</span>
+
+                  {columnGroup === 'none' ? (
+                    <>
+                      <span className="technical stocks-v2-volume" dir="ltr">
+                        {formatVolume(volume, locale)}
+                      </span>
+                      <MiniSparkline points={priceHistory.get(security.id)?.points ?? []} />
+                      <span className="stocks-v2-session">{security.latest_market_date ?? '—'}</span>
+                    </>
+                  ) : null}
+
+                  {columnGroup === 'valuation' ? (
+                    <>
+                      <span className="technical stocks-v2-number stocks-v2-extra" dir="ltr">
+                        {compactMoney(v?.marketCap ?? null, locale)}
+                      </span>
+                      <span className="technical stocks-v2-number stocks-v2-extra" dir="ltr">
+                        {ratioX(v?.pe ?? null, locale)}
+                      </span>
+                      <span className="technical stocks-v2-number stocks-v2-extra" dir="ltr">
+                        {ratioX(v?.pb ?? null, locale)}
+                      </span>
+                      <span className="technical stocks-v2-number stocks-v2-extra" dir="ltr">
+                        {ratioX(v?.evEbitda ?? null, locale)}
+                      </span>
+                      <span className="technical stocks-v2-number stocks-v2-extra" dir="ltr">
+                        {percentRatio(v?.dividendYield ?? null, locale)}
+                      </span>
+                    </>
+                  ) : null}
+
+                  {columnGroup === 'growth' ? (
+                    <>
+                      <span
+                        className={`technical stocks-v2-number stocks-v2-extra ${movementClassSigned(v?.revenueGrowth ?? null)}`}
+                        dir="ltr"
+                      >
+                        {percentRatio(v?.revenueGrowth ?? null, locale)}
+                      </span>
+                      <span
+                        className={`technical stocks-v2-number stocks-v2-extra ${movementClassSigned(v?.ebitdaGrowth ?? null)}`}
+                        dir="ltr"
+                      >
+                        {percentRatio(v?.ebitdaGrowth ?? null, locale)}
+                      </span>
+                      <span
+                        className={`technical stocks-v2-number stocks-v2-extra ${movementClassSigned(v?.epsGrowth ?? null)}`}
+                        dir="ltr"
+                      >
+                        {percentRatio(v?.epsGrowth ?? null, locale)}
+                      </span>
+                    </>
+                  ) : null}
+
+                  {columnGroup === 'quality' ? (
+                    <>
+                      <span className="technical stocks-v2-number stocks-v2-extra" dir="ltr">
+                        {percentRatio(v?.ebitdaMargin ?? null, locale)}
+                      </span>
+                      <span className="technical stocks-v2-number stocks-v2-extra" dir="ltr">
+                        {percentRatio(v?.netMargin ?? null, locale)}
+                      </span>
+                      <span className="technical stocks-v2-number stocks-v2-extra" dir="ltr">
+                        {percentRatio(v?.roe ?? null, locale)}
+                      </span>
+                    </>
+                  ) : null}
+
+                  {columnGroup === 'balance' ? (
+                    <>
+                      <span className="technical stocks-v2-number stocks-v2-extra" dir="ltr">
+                        {ratioX(v?.debtEquity ?? null, locale)}
+                      </span>
+                      <span className="technical stocks-v2-number stocks-v2-extra" dir="ltr">
+                        {compactMoney(v?.netDebt ?? null, locale)}
+                      </span>
+                    </>
+                  ) : null}
+
+                  <div className="stocks-v2-mobile-metrics">
+                    <span>
+                      <small>{t.screenerPe}</small>
+                      <b className="technical" dir="ltr">
+                        {ratioX(v?.pe ?? null, locale)}
+                      </b>
+                    </span>
+                    <span>
+                      <small>{t.screenerRoe}</small>
+                      <b className="technical" dir="ltr">
+                        {percentRatio(v?.roe ?? null, locale)}
+                      </b>
+                    </span>
+                    <span>
+                      <small>{t.screenerRevenueGrowth}</small>
+                      <b className="technical" dir="ltr">
+                        {percentRatio(v?.revenueGrowth ?? null, locale)}
+                      </b>
+                    </span>
+                  </div>
                 </a>
               );
             })
@@ -356,51 +720,6 @@ function Metric({ label, value }: { label: string; value: string }) {
       </strong>
     </span>
   );
-}
-
-function sortSecurities(
-  rows: SecurityRow[],
-  sort: SortMode,
-  history: Map<
-    string,
-    { points: Array<{ market_date: string; close_price: string }>; latestVolume: number | null }
-  >,
-) {
-  return [...rows].sort((left, right) => {
-    if (sort === 'name') return left.name.localeCompare(right.name);
-    if (sort === 'change') {
-      return (
-        compareNullableNumber(right.daily_change_percent, left.daily_change_percent) ||
-        left.ticker.localeCompare(right.ticker)
-      );
-    }
-    if (sort === 'price') {
-      return (
-        compareNullableNumber(right.latest_close_price, left.latest_close_price) ||
-        left.ticker.localeCompare(right.ticker)
-      );
-    }
-    if (sort === 'volume') {
-      const leftVolume = history.get(left.id)?.latestVolume ?? -1;
-      const rightVolume = history.get(right.id)?.latestVolume ?? -1;
-      return rightVolume - leftVolume || left.ticker.localeCompare(right.ticker);
-    }
-    return (
-      priorityRank(left.ticker) - priorityRank(right.ticker) ||
-      left.ticker.localeCompare(right.ticker)
-    );
-  });
-}
-
-function priorityRank(ticker: string) {
-  const rank = ['IAM', 'ATW', 'BCP'].indexOf(ticker);
-  return rank === -1 ? 99 : rank;
-}
-
-function compareNullableNumber(left: string | number | null, right: string | number | null) {
-  const leftNumber = left === null ? Number.NEGATIVE_INFINITY : Number(left);
-  const rightNumber = right === null ? Number.NEGATIVE_INFINITY : Number(right);
-  return leftNumber - rightNumber;
 }
 
 function groupPriceHistory(rows: PriceHistoryRow[]) {
@@ -444,24 +763,13 @@ function buildTickerItems(locale: Locale, indices: IndexRow[], securities: Secur
   return [...indexItems, ...securityItems];
 }
 
-function buildFilterHref(
-  locale: Locale,
-  filters: {
-    q: string | undefined;
-    sector: string | undefined;
-    sort: string | undefined;
-    priced: string | undefined;
-    move: string | undefined;
-  },
-) {
+function buildFilterHref(locale: Locale, filters: RawFilters) {
   const params = new URLSearchParams();
-  if (filters.q) params.set('q', filters.q);
-  if (filters.sector) params.set('sector', filters.sector);
-  if (filters.sort) params.set('sort', filters.sort);
-  if (filters.priced) params.set('priced', filters.priced);
-  if (filters.move) params.set('move', filters.move);
-  const query = params.toString();
-  return `/${locale}/stocks${query ? `?${query}` : ''}`;
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
+  const queryString = params.toString();
+  return `/${locale}/stocks${queryString ? `?${queryString}` : ''}`;
 }
 
 function computeAbsoluteChange(latest: string | null, previous: string | null) {
@@ -477,6 +785,11 @@ function movementClass(value: string | number | null | undefined) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '';
   return numeric >= 0 ? 'positive' : 'negative';
+}
+
+function movementClassSigned(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return '';
+  return value >= 0 ? 'positive' : 'negative';
 }
 
 function formatPercent(value: string | number | null | undefined) {
@@ -500,4 +813,31 @@ function formatVolume(value: number | null, locale: Locale) {
   return new Intl.NumberFormat(locale === 'ar' ? 'ar-MA' : locale === 'fr' ? 'fr-MA' : 'en-MA', {
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function intlLocale(locale: Locale) {
+  return locale === 'ar' ? 'ar-MA' : locale === 'fr' ? 'fr-MA' : 'en-MA';
+}
+
+function compactMoney(value: number | null, locale: Locale) {
+  if (value === null || !Number.isFinite(value)) return '—';
+  const formatted = new Intl.NumberFormat(intlLocale(locale), {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value);
+  return `${formatted} MAD`;
+}
+
+function percentRatio(value: number | null, locale: Locale) {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return new Intl.NumberFormat(intlLocale(locale), {
+    style: 'percent',
+    maximumFractionDigits: 1,
+    signDisplay: 'exceptZero',
+  }).format(value);
+}
+
+function ratioX(value: number | null, locale: Locale) {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return `${new Intl.NumberFormat(intlLocale(locale), { maximumFractionDigits: 2 }).format(value)}x`;
 }
