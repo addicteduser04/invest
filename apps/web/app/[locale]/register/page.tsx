@@ -8,12 +8,32 @@ export default async function Register({
   searchParams,
 }: {
   params: Promise<{ locale: string }>;
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; sent?: string }>;
 }) {
   const { locale: rawLocale } = await params;
-  const { error } = await searchParams;
+  const { error, sent } = await searchParams;
   const locale = asLocale(rawLocale);
   const t = getUi(locale);
+
+  if (sent === '1') {
+    return (
+      <main className="public-page" dir={direction(locale)}>
+        <PublicNav locale={locale} authenticated={false} />
+        <div className="auth-v2-page">
+          <section className="auth-v2-card">
+            <p className="public-eyebrow">{t.brand}</p>
+            <h1>{t.checkEmailTitle}</h1>
+            <p>{t.checkEmailSubtitle}</p>
+            <div className="auth-v2-links">
+              <a href={`/${locale}/login`}>{t.signIn}</a>
+            </div>
+          </section>
+        </div>
+        <PublicFooter locale={locale} authenticated={false} />
+      </main>
+    );
+  }
+
   return (
     <main className="public-page" dir={direction(locale)}>
       <PublicNav locale={locale} authenticated={false} />
@@ -46,6 +66,11 @@ export default async function Register({
             {error === 'registration' ? (
               <p className="auth-v2-error" role="alert">
                 {t.registrationFailed}
+              </p>
+            ) : null}
+            {error === 'exists' ? (
+              <p className="auth-v2-error" role="alert">
+                {t.registrationAlreadyExists}
               </p>
             ) : null}
             <div className="auth-v2-links">

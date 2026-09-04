@@ -9,6 +9,7 @@ import {
   logout,
   renamePortfolio,
   restorePortfolio,
+  updatePassword,
   updateProfileSettings,
 } from '../auth-actions';
 
@@ -17,10 +18,10 @@ export default async function AccountPage({
   searchParams,
 }: {
   params: Promise<{ locale: string }>;
-  searchParams: Promise<{ saved?: string }>;
+  searchParams: Promise<{ saved?: string; passwordSaved?: string; error?: string }>;
 }) {
   const { locale: rawLocale } = await params;
-  const { saved } = await searchParams;
+  const { saved, passwordSaved, error } = await searchParams;
   const locale = asLocale(rawLocale);
   const t = getUi(locale);
   const supabase = await createClient();
@@ -66,6 +67,11 @@ export default async function AccountPage({
           <p role="status">{t.saved}</p>
         </div>
       ) : null}
+      {passwordSaved === '1' ? (
+        <div className="account-v2-success">
+          <p role="status">{t.passwordUpdated}</p>
+        </div>
+      ) : null}
 
       <div className="account-v2-grid">
         <section className="account-v2-panel">
@@ -95,6 +101,32 @@ export default async function AccountPage({
               </select>
             </label>
             <button type="submit">{t.saveChanges}</button>
+          </form>
+        </section>
+
+        <section className="account-v2-panel">
+          <p className="public-eyebrow">{t.accountSettings}</p>
+          <h2>{t.changePassword}</h2>
+          <p className="account-v2-microcopy">{t.changePasswordNotice}</p>
+          <form className="account-v2-form" action={updatePassword}>
+            <input type="hidden" name="locale" value={locale} />
+            <input type="hidden" name="returnTo" value="account" />
+            <label>
+              {t.newPassword}
+              <input
+                required
+                name="password"
+                type="password"
+                minLength={10}
+                autoComplete="new-password"
+              />
+            </label>
+            <button type="submit">{t.updatePassword}</button>
+            {error === 'password' ? (
+              <p className="auth-v2-error" role="alert">
+                {t.passwordUpdateFailed}
+              </p>
+            ) : null}
           </form>
         </section>
 

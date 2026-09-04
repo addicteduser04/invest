@@ -10,6 +10,15 @@ export {
   type StalenessCutoff,
 } from './staleness';
 
+export {
+  previewFundamentalsCsv,
+  type KnownSecurity,
+  type ExistingFundamentalsPeriod,
+  type FundamentalsCandidate,
+  type FundamentalsPreviewRow,
+  type FundamentalsImportPreview,
+} from './fundamentals-import';
+
 export interface CsvMapping {
   date: string;
   ticker: string;

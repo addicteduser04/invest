@@ -3137,6 +3137,18 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Denser, operations-console sizing for the recent-runs table specifically -- ten columns need
+   to fit the full card width at ~1440px without a horizontal scrollbar. */
+.runs-table th,
+.runs-table td {
+  padding: 10px 9px;
+  font-size: 0.82rem;
+}
+.runs-table th[data-numeric],
+.runs-table td[data-numeric] {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
 .ticker-link {
   color: var(--green);
   font-weight: 800;
@@ -3813,6 +3825,14 @@ button {
   border-radius: 8px;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.58);
+}
+.security-v2-fundamentals {
+  max-width: 1440px;
+  margin-inline: auto;
+  padding-inline: 34px;
+  padding-bottom: 24px;
+  display: grid;
+  gap: 18px;
 }
 .security-v2-info {
   display: grid;
@@ -4651,8 +4671,8 @@ button {
 
 .health-metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 14px 20px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px 22px;
   margin-top: 18px;
 }
 .health-metrics > div {
@@ -4663,19 +4683,69 @@ button {
   font-size: 0.74rem;
   margin-bottom: 6px;
 }
+/* Operational/technical values (provider ids, timestamps, ratios, counts) use the normal UI
+   sans font, not the editorial serif -- the serif stays reserved for headings and headline
+   financial values elsewhere in the product. */
 .health-metrics dd {
   margin: 0;
-  font: 700 clamp(1.1rem, 2vw, 1.4rem) var(--font-serif);
+  font-size: 1.05rem;
+  font-weight: 750;
   color: var(--green);
+  font-variant-numeric: tabular-nums;
   overflow-wrap: break-word;
+}
+.health-metrics dd.is-technical {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .health-metrics dd small {
   display: block;
   font-family: inherit;
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   font-weight: 650;
   color: var(--muted);
-  margin-top: 2px;
+  margin-top: 3px;
+  white-space: nowrap;
+}
+
+/* Every section on this page is a full-width operations panel (health summary, recent runs,
+   coverage, index health) -- unlike the shared 1/3+2/3 .dashboard-grid layout used by other
+   admin pages, none of these have a narrower sibling, so a plain single-column stack is used
+   here instead of borrowing a multi-column grid that would leave a dead empty gutter. */
+.market-data-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  margin-top: 16px;
+}
+
+.run-banner {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.run-banner.is-info {
+  background: #eef4f0;
+  color: var(--ink);
+}
+.run-banner.is-success {
+  background: #e3f1ea;
+  color: #1c7353;
+}
+.run-banner.is-warning {
+  background: #f6ecd6;
+  color: #8b6518;
+}
+.run-banner.is-error {
+  background: #f7e4e2;
+  color: var(--danger);
 }
 
 .run-panel-trigger {

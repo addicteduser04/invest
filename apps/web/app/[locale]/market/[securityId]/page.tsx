@@ -6,6 +6,8 @@ import { MarketPriceChart } from '@/components/market-price-chart';
 import { MarketTicker, type TickerItem } from '@/components/public/market-ticker';
 import { PublicNav } from '@/components/public/public-nav';
 import { PublicFooter } from '@/components/public/public-footer';
+import { SecurityFundamentalsSection } from '@/components/security-fundamentals-section';
+import { readSecurityFundamentals } from '@/lib/fundamentals-read';
 
 type PeriodKey = '1M' | '3M' | 'YTD' | '1Y' | '3Y';
 
@@ -132,32 +134,34 @@ export default async function SecurityPage({
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [securityResult, historyResult, indicesResult, masiHistoryResult] = await Promise.all([
-    supabase
-      .from('market_security_overview')
-      .select(
-        'id,name,ticker,sector,listing_status,listed_on,is_synthetic,latest_market_date,latest_close_price,previous_market_date,previous_close_price,daily_change_percent,latest_price_provisional,latest_provider_id',
-      )
-      .eq('id', securityId)
-      .maybeSingle(),
-    supabase
-      .from('market_price_history')
-      .select('market_date,open_price,high_price,low_price,close_price,volume,status,provider_id')
-      .eq('security_id', securityId)
-      .order('market_date', { ascending: false })
-      .limit(900),
-    supabase
-      .from('market_index_overview')
-      .select('id,code,name,latest_market_date,latest_close_value,daily_change_percent')
-      .in('code', ['MASI', 'MSI20', 'ESGI', 'MASIMS'])
-      .order('code'),
-    supabase
-      .from('market_index_history')
-      .select('market_date,close_value')
-      .eq('code', 'MASI')
-      .order('market_date', { ascending: true })
-      .limit(900),
-  ]);
+  const [securityResult, historyResult, indicesResult, masiHistoryResult, fundamentals] =
+    await Promise.all([
+      supabase
+        .from('market_security_overview')
+        .select(
+          'id,name,ticker,sector,listing_status,listed_on,is_synthetic,latest_market_date,latest_close_price,previous_market_date,previous_close_price,daily_change_percent,latest_price_provisional,latest_provider_id',
+        )
+        .eq('id', securityId)
+        .maybeSingle(),
+      supabase
+        .from('market_price_history')
+        .select('market_date,open_price,high_price,low_price,close_price,volume,status,provider_id')
+        .eq('security_id', securityId)
+        .order('market_date', { ascending: false })
+        .limit(900),
+      supabase
+        .from('market_index_overview')
+        .select('id,code,name,latest_market_date,latest_close_value,daily_change_percent')
+        .in('code', ['MASI', 'MSI20', 'ESGI', 'MASIMS'])
+        .order('code'),
+      supabase
+        .from('market_index_history')
+        .select('market_date,close_value')
+        .eq('code', 'MASI')
+        .order('market_date', { ascending: true })
+        .limit(900),
+      readSecurityFundamentals(securityId),
+    ]);
 
   const security = securityResult.data as SecurityRow | null;
   if (!security) notFound();
@@ -314,6 +318,8 @@ export default async function SecurityPage({
           )}
         </div>
       </section>
+
+      <SecurityFundamentalsSection locale={locale} fundamentals={fundamentals} />
 
       <section className="security-v2-info">
         <div>

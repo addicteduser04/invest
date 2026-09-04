@@ -1061,4 +1061,175 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
       ),
     ).rejects.toThrow(/permission denied/);
   });
+
+  describe.sequential('fundamentals import and read model', () => {
+    // A dedicated admin identity, not ids.admin: market.fundamentals_import_runs is append-only
+    // (private.prevent_mutation(), same guard as market.ingestion_runs) and created_by has no
+    // cascade, so once it references an actor that actor's profile can never be deleted again --
+    // scoping it to a throwaway identity keeps the outer suite's auth.users cleanup unaffected.
+    const fundamentalsAdmin = randomUUID();
+
+    beforeAll(async () => {
+      await adminClient.query(
+        `insert into auth.users(id, instance_id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+         values($1::uuid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', $1::text || '@example.test', '', '{}', '{}', now(), now())`,
+        [fundamentalsAdmin],
+      );
+      await adminClient.query("insert into public.user_roles(user_id,role) values($1,'data_admin')", [
+        fundamentalsAdmin,
+      ]);
+    });
+
+    afterAll(async () => {
+      await adminClient.query('delete from market.fundamentals where security_id=$1', [securityId]);
+    });
+
+    function fundamentalsRow(overrides: Record<string, unknown> = {}) {
+      return {
+        securityId,
+        periodType: 'annual',
+        interimPeriod: null,
+        fiscalYear: 2024,
+        periodEndDate: '2024-12-31',
+        publicationDate: '2025-02-15',
+        currency: 'MAD',
+        revenue: '1000',
+        ebitda: '300',
+        ebit: '250',
+        netIncome: '150',
+        eps: '1.5',
+        cash: '400',
+        totalDebt: '200',
+        totalAssets: '2000',
+        totalEquity: '900',
+        operatingCashFlow: '350',
+        capex: '80',
+        sharesOutstanding: '1000000',
+        dividendPerShare: '0.5',
+        ...overrides,
+      };
+    }
+
+    async function applyImport(rows: Record<string, unknown>[], userId = fundamentalsAdmin) {
+      return asUser<{
+        result: {
+          insertedCount: number;
+          updatedCount: number;
+          noopCount: number;
+          importRunId: string;
+        };
+      }>(userId, 'select public.apply_fundamentals_import($1,$2,$3,$4) result', [
+        `hash-${randomUUID()}`,
+        'sample.csv',
+        JSON.stringify(rows),
+        JSON.stringify({}),
+      ]);
+    }
+
+    it('upserts idempotently and reports exact insert/update/no-op counts', async () => {
+      const row = fundamentalsRow();
+      const first = await applyImport([row]);
+      expect(first.rows[0]!.result).toMatchObject({
+        insertedCount: 1,
+        updatedCount: 0,
+        noopCount: 0,
+      });
+
+      const again = await applyImport([row]);
+      expect(again.rows[0]!.result).toMatchObject({
+        insertedCount: 0,
+        updatedCount: 0,
+        noopCount: 1,
+      });
+
+      const changed = await applyImport([fundamentalsRow({ revenue: '1100' })]);
+      expect(changed.rows[0]!.result).toMatchObject({
+        insertedCount: 0,
+        updatedCount: 1,
+        noopCount: 0,
+      });
+
+      const count = await adminClient.query<{ count: string }>(
+        'select count(*)::text count from market.fundamentals where security_id=$1 and period_end_date=$2',
+        [securityId, '2024-12-31'],
+      );
+      expect(count.rows[0]!.count).toBe('1');
+    });
+
+    it('rejects an unknown security via foreign key violation', async () => {
+      await expect(
+        applyImport([
+          fundamentalsRow({
+            securityId: randomUUID(),
+            periodEndDate: '2020-01-01',
+            publicationDate: '2020-06-01',
+          }),
+        ]),
+      ).rejects.toThrow(/foreign key/i);
+    });
+
+    it('rejects an interim row missing interim_period and an annual row carrying one', async () => {
+      await expect(
+        applyImport([
+          fundamentalsRow({
+            periodType: 'interim',
+            interimPeriod: null,
+            periodEndDate: '2024-06-30',
+            publicationDate: '2024-08-01',
+          }),
+        ]),
+      ).rejects.toThrow(/violates check constraint/i);
+      await expect(
+        applyImport([
+          fundamentalsRow({
+            periodType: 'annual',
+            interimPeriod: 'H1',
+            periodEndDate: '2021-12-31',
+            publicationDate: '2022-02-01',
+          }),
+        ]),
+      ).rejects.toThrow(/violates check constraint/i);
+    });
+
+    it('rejects a publication_date earlier than period_end_date', async () => {
+      await expect(
+        applyImport([
+          fundamentalsRow({ periodEndDate: '2022-12-31', publicationDate: '2022-01-01' }),
+        ]),
+      ).rejects.toThrow(/violates check constraint/i);
+    });
+
+    it('denies import to a non-admin investor and returns no rows from the admin-only period lookup', async () => {
+      await expect(
+        applyImport(
+          [fundamentalsRow({ periodEndDate: '2019-12-31', publicationDate: '2020-02-01' })],
+          ids.userA,
+        ),
+      ).rejects.toThrow(/FORBIDDEN/);
+      const listResult = await asUser<{ security_id: string }>(
+        ids.userA,
+        'select * from public.list_fundamentals_periods($1::uuid[])',
+        [[securityId]],
+      );
+      expect(listResult.rows).toEqual([]);
+    });
+
+    it('exposes fundamentals to anon/authenticated only through the public view, not the raw table', async () => {
+      await applyImport([
+        fundamentalsRow({ periodEndDate: '2030-12-31', publicationDate: '2031-01-01' }),
+      ]);
+      const anonView = await asUser<{ security_id: string }>(
+        null,
+        'select security_id from public.security_fundamentals where security_id=$1 and period_end_date=$2',
+        [securityId, '2030-12-31'],
+      );
+      expect(anonView.rows.length).toBe(1);
+      await expect(asUser(null, 'select 1 from market.fundamentals limit 1')).rejects.toThrow(
+        /permission denied/,
+      );
+      await expect(asUser(ids.userA, 'select 1 from market.fundamentals limit 1')).rejects.toThrow(
+        /permission denied/,
+      );
+    });
+  });
 });

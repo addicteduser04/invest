@@ -3,9 +3,12 @@ import { createClient } from '@/lib/supabase/server';
 import { asLocale, direction, getUi } from '@/lib/i18n';
 import { PublicNav } from '@/components/public/public-nav';
 import { PublicFooter } from '@/components/public/public-footer';
-import { AdminSecurityImport, type AdminSecurityRow } from '@/components/admin-security-import';
+import {
+  AdminFundamentalsImport,
+  type AdminFundamentalsRun,
+} from '@/components/admin-fundamentals-import';
 
-export default async function SecurityAdminPage({
+export default async function FundamentalsAdminPage({
   params,
 }: {
   params: Promise<{ locale: string }>;
@@ -25,21 +28,21 @@ export default async function SecurityAdminPage({
     .eq('role', 'data_admin')
     .maybeSingle();
   if (!role) redirect(`/${locale}/dashboard`);
-  const { data: rows } = await supabase.rpc('list_market_security_master_admin');
+  const { data: runs } = await supabase.rpc('list_fundamentals_import_runs');
   return (
     <main className="public-page admin-v2-page" dir={direction(locale)}>
       <PublicNav locale={locale} authenticated />
       <div className="admin-v2-hero">
         <div>
           <p className="public-eyebrow">{t.adminEyebrow}</p>
-          <h1>{t.adminSecurityMasterTitle}</h1>
+          <h1>{t.adminFundamentalsLink}</h1>
         </div>
+        <a href={`/${locale}/admin/securities`}>{t.adminSecurityMasterLink}</a>
         <a href={`/${locale}/admin/import`}>{t.adminPriceImportsLink}</a>
         <a href={`/${locale}/admin/market-data`}>{t.adminMarketDataLink}</a>
-        <a href={`/${locale}/admin/fundamentals`}>{t.adminFundamentalsLink}</a>
       </div>
       <div className="admin-v2-body">
-        <AdminSecurityImport locale={locale} rows={(rows ?? []) as AdminSecurityRow[]} />
+        <AdminFundamentalsImport locale={locale} runs={(runs ?? []) as AdminFundamentalsRun[]} />
       </div>
       <PublicFooter locale={locale} authenticated />
     </main>

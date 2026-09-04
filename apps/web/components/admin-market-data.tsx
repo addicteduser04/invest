@@ -14,8 +14,10 @@ import {
   type UiRun,
 } from '@/lib/market-data-ui';
 
-const CONFIGURED_SCHEDULE = '18:05 Africa/Casablanca';
+const CONFIGURED_SCHEDULE_TIME = '18:05';
+const CONFIGURED_SCHEDULE_TZ = 'Africa/Casablanca';
 const POLL_INTERVAL_MS = 4000;
+type MessageTone = 'info' | 'success' | 'warning';
 
 interface Props {
   locale: Locale;
@@ -46,10 +48,16 @@ const copy = {
     lastSuccessfulIngestion: 'Last successful ingestion',
     provider: 'Provider',
     providerUnavailable: 'Not configured',
-    coverage: 'Coverage',
+    providerLabels: {
+      bvc_public_testing: 'BVC public testing',
+      licensed_api: 'Licensed API',
+      licensed_sftp: 'Licensed SFTP feed',
+    },
+    coverage: 'Session coverage',
     failures: 'Failures',
+    equityFailures: 'Equities failed',
+    indexFailures: 'Indices failed',
     nextRefresh: 'Next expected refresh',
-    configuredSchedule: 'Configured schedule',
     runImportButton: 'Run market import',
     panelTitle: 'Run daily market import',
     dateLabel: 'Date',
@@ -63,6 +71,10 @@ const copy = {
     cancelButton: 'Cancel',
     confirmButton: 'Run import',
     runStartedMessage: 'Import started. Tracking live progress below.',
+    runSucceededMessage: 'Import completed successfully.',
+    runPartialMessage: 'Import completed with some failures. Review the details below.',
+    runFailedMessage: 'The import failed. Review the failures and retry if needed.',
+    viewRunDetails: 'View run details',
     dryRunPrefix: 'Dry run complete',
     genericError: 'Something went wrong. Please try again.',
     runningLabel: 'RUNNING',
@@ -130,10 +142,16 @@ const copy = {
     lastSuccessfulIngestion: 'Dernière ingestion réussie',
     provider: 'Fournisseur',
     providerUnavailable: 'Non configuré',
-    coverage: 'Couverture',
+    providerLabels: {
+      bvc_public_testing: 'Test public BVC',
+      licensed_api: 'API sous licence',
+      licensed_sftp: 'Flux SFTP sous licence',
+    },
+    coverage: 'Couverture de la séance',
     failures: 'Échecs',
+    equityFailures: 'Actions en échec',
+    indexFailures: 'Indices en échec',
     nextRefresh: 'Prochaine actualisation prévue',
-    configuredSchedule: 'Planification configurée',
     runImportButton: 'Lancer un import de marché',
     panelTitle: 'Lancer l’import quotidien de marché',
     dateLabel: 'Date',
@@ -147,6 +165,10 @@ const copy = {
     cancelButton: 'Annuler',
     confirmButton: 'Lancer l’import',
     runStartedMessage: 'Import démarré. Suivez la progression en direct ci-dessous.',
+    runSucceededMessage: 'Import terminé avec succès.',
+    runPartialMessage: 'Import terminé avec certains échecs. Consultez le détail ci-dessous.',
+    runFailedMessage: 'L’import a échoué. Consultez les échecs et relancez si nécessaire.',
+    viewRunDetails: 'Voir les détails de l’exécution',
     dryRunPrefix: 'Simulation terminée',
     genericError: 'Une erreur est survenue. Veuillez réessayer.',
     runningLabel: 'EN COURS',
@@ -210,10 +232,16 @@ const copy = {
     lastSuccessfulIngestion: 'آخر استيراد ناجح',
     provider: 'المزوّد',
     providerUnavailable: 'غير مُهيأ',
-    coverage: 'التغطية',
+    providerLabels: {
+      bvc_public_testing: 'اختبار عام BVC',
+      licensed_api: 'واجهة برمجة مرخصة',
+      licensed_sftp: 'تغذية SFTP مرخصة',
+    },
+    coverage: 'تغطية الجلسة',
     failures: 'الإخفاقات',
+    equityFailures: 'أسهم فاشلة',
+    indexFailures: 'مؤشرات فاشلة',
     nextRefresh: 'التحديث المتوقع التالي',
-    configuredSchedule: 'الجدول المُهيأ',
     runImportButton: 'تشغيل استيراد بيانات السوق',
     panelTitle: 'تشغيل الاستيراد اليومي لبيانات السوق',
     dateLabel: 'التاريخ',
@@ -227,6 +255,10 @@ const copy = {
     cancelButton: 'إلغاء',
     confirmButton: 'تشغيل الاستيراد',
     runStartedMessage: 'بدأ الاستيراد. تابع التقدم المباشر أدناه.',
+    runSucceededMessage: 'اكتمل الاستيراد بنجاح.',
+    runPartialMessage: 'اكتمل الاستيراد مع بعض الإخفاقات. راجع التفاصيل أدناه.',
+    runFailedMessage: 'فشل الاستيراد. راجع الإخفاقات وأعد المحاولة إذا لزم الأمر.',
+    viewRunDetails: 'عرض تفاصيل التشغيل',
     dryRunPrefix: 'اكتملت التجربة',
     genericError: 'حدث خطأ ما. يرجى المحاولة مرة أخرى.',
     runningLabel: 'قيد التشغيل',
@@ -316,7 +348,9 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
   const [date, setDate] = useState(todayIso);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [messageTone, setMessageTone] = useState<MessageTone>('info');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [terminalRunId, setTerminalRunId] = useState<string | null>(null);
 
   const [coverageSearch, setCoverageSearch] = useState('');
   const [coverageFilter, setCoverageFilter] = useState<'all' | CoverageStatus>('all');
@@ -344,6 +378,24 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
       setLiveRun(run);
       if (run.status !== 'running') {
         setActiveRunId(null);
+        // The "import started" banner must not linger once the run reaches a terminal state --
+        // replace it with an outcome-specific message instead of leaving the started/-progress
+        // text visible after the run has actually succeeded, partially failed, or failed.
+        if (run.status === 'succeeded') {
+          setMessage(t.runSucceededMessage);
+          setMessageTone('success');
+          setErrorMessage(null);
+          setTerminalRunId(null);
+        } else if (run.status === 'partial') {
+          setMessage(t.runPartialMessage);
+          setMessageTone('warning');
+          setErrorMessage(null);
+          setTerminalRunId(null);
+        } else {
+          setMessage(null);
+          setErrorMessage(t.runFailedMessage);
+          setTerminalRunId(run.id);
+        }
         void refresh();
       }
     };
@@ -353,7 +405,7 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
       cancelled = true;
       clearInterval(interval);
     };
-  }, [activeRunId, refresh]);
+  }, [activeRunId, refresh, t]);
 
   const health = snapshot ? computeHealthStatus(snapshot) : 'no_data';
   const lastRun = snapshot?.lastRun ?? null;
@@ -367,6 +419,8 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
     setBusy(true);
     setErrorMessage(null);
     setMessage(null);
+    setMessageTone('info');
+    setTerminalRunId(null);
     try {
       const tickers =
         scope === 'selected'
@@ -428,9 +482,16 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
     });
   }, [snapshot, coverageSearch, coverageFilter, coverageSort]);
 
+  const lastRunMetrics = lastRun?.['metrics'] as
+    | { securitiesFailed?: number; indicesFailed?: number }
+    | undefined;
+  const providerLabel = provider.id
+    ? (t.providerLabels[provider.id as keyof typeof t.providerLabels] ?? provider.id)
+    : t.providerUnavailable;
+
   return (
-    <div className="dashboard-grid">
-      <section className="card span-2">
+    <div className="market-data-grid">
+      <section className="card">
         <div className="run-panel-trigger">
           <div>
             <p className="eyebrow">{t.eyebrow}</p>
@@ -467,11 +528,14 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
           </div>
           <div>
             <dt>{t.provider}</dt>
-            <dd dir="ltr">{provider.id ?? t.providerUnavailable}</dd>
+            <dd className="is-technical" dir="ltr">
+              {providerLabel}
+              {provider.id ? <small dir="ltr">{provider.id}</small> : null}
+            </dd>
           </div>
           <div>
             <dt>{t.coverage}</dt>
-            <dd dir="ltr">
+            <dd className="is-technical" dir="ltr">
               {snapshot
                 ? snapshot.coverage.filter((row) => computeCoverageStatus(row) === 'current').length
                 : 0}
@@ -480,24 +544,28 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
             </dd>
           </div>
           <div>
-            <dt>{t.failures}</dt>
+            <dt>{t.equityFailures}</dt>
             <dd
+              className={lastRunMetrics?.securitiesFailed ? 'is-technical error-text' : 'is-technical'}
               dir="ltr"
-              className={
-                lastRun && (lastRun['metrics'] as { securitiesFailed?: number })?.securitiesFailed
-                  ? 'error-text'
-                  : undefined
-              }
             >
-              {(lastRun?.['metrics'] as { securitiesFailed?: number } | undefined)
-                ?.securitiesFailed ?? 0}
+              {lastRunMetrics?.securitiesFailed ?? 0}
+            </dd>
+          </div>
+          <div>
+            <dt>{t.indexFailures}</dt>
+            <dd
+              className={lastRunMetrics?.indicesFailed ? 'is-technical error-text' : 'is-technical'}
+              dir="ltr"
+            >
+              {lastRunMetrics?.indicesFailed ?? 0}
             </dd>
           </div>
           <div>
             <dt>{t.nextRefresh}</dt>
-            <dd>
-              <span dir="ltr">{CONFIGURED_SCHEDULE}</span>
-              <small>{t.configuredSchedule}</small>
+            <dd className="is-technical" dir="ltr">
+              {CONFIGURED_SCHEDULE_TIME}
+              <small dir="ltr">{CONFIGURED_SCHEDULE_TZ}</small>
             </dd>
           </div>
         </dl>
@@ -597,14 +665,26 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
 
         {liveRun && liveRun.status === 'running' ? <LiveRunPanel run={liveRun} t={t} /> : null}
         {message ? (
-          <p className="status-message" role="status">
+          <p className={`run-banner is-${messageTone}`} role="status">
             {message}
           </p>
         ) : null}
-        {errorMessage ? <p className="error-list">{errorMessage}</p> : null}
+        {errorMessage ? (
+          <div className="run-banner is-error" role="alert">
+            <span>{errorMessage}</span>
+            {terminalRunId ? (
+              <a
+                className="button secondary compact"
+                href={`/${locale}/admin/market-data/runs/${terminalRunId}`}
+              >
+                {t.viewRunDetails}
+              </a>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
-      <section className="card span-2">
+      <section className="card">
         <div className="section-heading">
           <h2>{t.recentRunsTitle}</h2>
         </div>
@@ -615,18 +695,18 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
           </div>
         ) : (
           <div className="table-scroll">
-            <table className="table responsive-table">
+            <table className="table responsive-table runs-table">
               <thead>
                 <tr>
                   <th>{t.colStatus}</th>
                   <th>{t.colDate}</th>
                   <th>{t.colProvider}</th>
                   <th>{t.colStarted}</th>
-                  <th>{t.colDuration}</th>
-                  <th>{t.colEquities}</th>
-                  <th>{t.colIndices}</th>
-                  <th>{t.colPublished}</th>
-                  <th>{t.colFailures}</th>
+                  <th data-numeric>{t.colDuration}</th>
+                  <th data-numeric>{t.colEquities}</th>
+                  <th data-numeric>{t.colIndices}</th>
+                  <th data-numeric>{t.colPublished}</th>
+                  <th data-numeric>{t.colFailures}</th>
                   <th>{t.colTrigger}</th>
                 </tr>
               </thead>
@@ -647,29 +727,30 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
                         {t.runStatusLabels[run.status] ?? run.status}
                       </span>
                     </td>
-                    <td data-label={t.colDate} dir="ltr">
+                    <td data-label={t.colDate} className="technical" dir="ltr">
                       {run.marketDate ?? t.dash}
                     </td>
-                    <td data-label={t.colProvider} dir="ltr">
+                    <td data-label={t.colProvider} className="technical" dir="ltr">
                       {run.providerId}
                     </td>
-                    <td data-label={t.colStarted} dir="ltr">
+                    <td data-label={t.colStarted} className="technical" dir="ltr">
                       {formatTime(run.startedAt, localeTag)}
                     </td>
-                    <td data-label={t.colDuration} dir="ltr">
+                    <td data-label={t.colDuration} data-numeric dir="ltr">
                       {formatDuration(run.startedAt, run.finishedAt)}
                     </td>
-                    <td data-label={t.colEquities} dir="ltr">
+                    <td data-label={t.colEquities} data-numeric dir="ltr">
                       {run.metrics.securitiesSucceeded}/{run.metrics.securitiesExpected}
                     </td>
-                    <td data-label={t.colIndices} dir="ltr">
+                    <td data-label={t.colIndices} data-numeric dir="ltr">
                       {run.metrics.indicesSucceeded}/{run.metrics.indicesExpected}
                     </td>
-                    <td data-label={t.colPublished} dir="ltr">
+                    <td data-label={t.colPublished} data-numeric dir="ltr">
                       {run.metrics.rowsPublished}
                     </td>
                     <td
                       data-label={t.colFailures}
+                      data-numeric
                       dir="ltr"
                       className={run.instrumentFailures.length ? 'error-text' : undefined}
                     >
@@ -687,7 +768,7 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
         )}
       </section>
 
-      <section className="card span-2">
+      <section className="card">
         <div className="section-heading">
           <h2>{t.coverageTitle}</h2>
         </div>
@@ -760,7 +841,7 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
         )}
       </section>
 
-      <section className="card span-2">
+      <section className="card">
         <div className="section-heading">
           <h2>{t.indexHealthTitle}</h2>
         </div>

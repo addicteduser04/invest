@@ -14,12 +14,19 @@ export async function register(formData: FormData) {
   const email = String(formData.get('email'));
   const password = String(formData.get('password'));
   const supabase = await createClient();
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: { data: { locale, display_name: String(formData.get('displayName') ?? '') } },
   });
-  if (error) redirect(`/${locale}/register?error=registration`);
+  if (error) {
+    const alreadyExists = /already registered|already exists/i.test(error.message);
+    redirect(`/${locale}/register?error=${alreadyExists ? 'exists' : 'registration'}`);
+  }
+  // signUp returns no session when email confirmation is required (the realistic case for a
+  // hosted Supabase project) — redirecting to /dashboard in that case would just silently
+  // bounce the unauthenticated user to /login with no explanation.
+  if (!data.session) redirect(`/${locale}/register?sent=1`);
   redirect(`/${locale}/dashboard`);
 }
 
@@ -202,16 +209,21 @@ export async function requestPasswordReset(formData: FormData) {
 
 export async function updatePassword(formData: FormData) {
   const locale = asLocale(String(formData.get('locale') ?? 'fr'));
+  const returnTo = formData.get('returnTo') === 'account' ? 'account' : 'reset-password';
+  const errorTarget =
+    returnTo === 'account'
+      ? `/${locale}/account?error=password`
+      : `/${locale}/reset-password?error=password`;
   const password = String(formData.get('password') ?? '');
-  if (password.length < 10) redirect(`/${locale}/reset-password?error=password`);
+  if (password.length < 10) redirect(errorTarget);
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect(`/${locale}/login`);
   const { error } = await supabase.auth.updateUser({ password });
-  if (error) redirect(`/${locale}/reset-password?error=password`);
-  redirect(`/${locale}/dashboard`);
+  if (error) redirect(errorTarget);
+  redirect(returnTo === 'account' ? `/${locale}/account?passwordSaved=1` : `/${locale}/dashboard`);
 }
 
 export async function updateProfileSettings(formData: FormData) {
