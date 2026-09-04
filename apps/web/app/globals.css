@@ -2107,25 +2107,31 @@ body {
 @media (max-width: 860px) {
   .public-nav {
     min-height: 0;
-    grid-template-columns: 1fr auto;
-    gap: 14px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    gap: 10px 14px;
     padding: 13px 18px;
   }
+  .public-brand {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  /* Every destination stays reachable at narrow widths -- links wrap onto additional
+     lines instead of scrolling off-screen with a hidden scrollbar (no visual affordance)
+     or being clipped by the viewport edge. */
   .public-nav-links {
     grid-column: 1 / -1;
     order: 3;
-    overflow-x: auto;
-    padding-bottom: 3px;
-    scrollbar-width: none;
-  }
-  .public-nav-links::-webkit-scrollbar {
-    display: none;
+    flex-wrap: wrap;
+    row-gap: 8px;
+    column-gap: 16px;
   }
   .public-nav-actions {
-    gap: 10px;
-  }
-  .public-account-link {
-    display: none;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px 10px;
   }
   .market-ticker-band {
     height: 38px;
