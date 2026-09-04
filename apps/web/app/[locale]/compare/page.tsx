@@ -10,6 +10,7 @@ import { ComparePanel, type CompareSecurityDetail } from '@/components/compare-p
 import { formatMoney } from '@/components/public/home-market-sections';
 import type { Security } from '@/components/security-picker';
 import { MAX_COMPARE_SECURITIES } from '@/lib/compare-metrics';
+import { readValuationSnapshots } from '@/lib/valuation-read';
 
 interface SecurityRow {
   id: string;
@@ -122,6 +123,16 @@ export default async function ComparePage({
     if (security) historyBySecurityId.set(security.id, (result.data ?? []) as PriceHistoryRow[]);
   });
 
+  // One batched read regardless of how many securities are selected -- reuses the same
+  // canonical valuation snapshot used by the Stocks screener and Security Detail.
+  const valuationMap = await readValuationSnapshots(
+    selectedSecurities.map((security) => ({
+      id: security.id,
+      latestPrice: security.latest_close_price,
+      priceDate: security.latest_market_date,
+    })),
+  );
+
   const compareSecurities: CompareSecurityDetail[] = selectedSecurities.map((security) => ({
     id: security.id,
     ticker: security.ticker,
@@ -136,6 +147,7 @@ export default async function ComparePage({
       close_price: row.close_price,
       volume: row.volume,
     })),
+    valuation: valuationMap.get(security.id)!,
   }));
 
   const pickerSecurities: Security[] = allSecurities.map(({ id, ticker, name }) => ({

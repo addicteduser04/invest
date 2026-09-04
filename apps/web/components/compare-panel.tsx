@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { Locale } from '@bvc/contracts';
 import { getUi } from '@/lib/i18n';
 import { formatMoney } from '@/components/public/home-market-sections';
@@ -14,6 +14,7 @@ import {
   type ComparePeriod,
   type ComparePricePoint,
 } from '@/lib/compare-metrics';
+import type { ValuationSnapshot } from '@/lib/valuation-read';
 
 export interface CompareSecurityDetail {
   id: string;
@@ -25,6 +26,7 @@ export interface CompareSecurityDetail {
   daily_change_percent: string | number | null;
   latest_price_provisional: boolean | null;
   history: ComparePricePoint[];
+  valuation: ValuationSnapshot;
 }
 
 const PALETTE = ['#44d7be', '#c7a458', '#6fb3f2', '#d98cd6'];
@@ -184,6 +186,46 @@ export function ComparePanel({
                       : t.unavailable,
                 )}
               />
+              <tr className="compare-v2-matrix-divider">
+                <th scope="row" colSpan={securities.length + 1}>
+                  {t.fundamentalsEyebrow}
+                </th>
+              </tr>
+              <MetricRow
+                label={t.screenerMarketCap}
+                cells={securities.map((security) => compactMoney(security.valuation.marketCap, locale))}
+              />
+              <MetricRow
+                label={t.screenerPe}
+                cells={securities.map((security) => ratioX(security.valuation.pe, locale))}
+              />
+              <MetricRow
+                label={t.screenerPb}
+                cells={securities.map((security) => ratioX(security.valuation.pb, locale))}
+              />
+              <MetricRow
+                label={t.screenerEvEbitda}
+                cells={securities.map((security) => ratioX(security.valuation.evEbitda, locale))}
+              />
+              <MetricRow
+                label={t.screenerRevenueGrowth}
+                cells={securities.map((security) => percentRatio(security.valuation.revenueGrowth, locale))}
+                tones={securities.map((security) => toneClass(security.valuation.revenueGrowth))}
+              />
+              <MetricRow
+                label={t.screenerNetMargin}
+                cells={securities.map((security) => percentRatio(security.valuation.netMargin, locale))}
+                tones={securities.map((security) => toneClass(security.valuation.netMargin))}
+              />
+              <MetricRow
+                label={t.screenerRoe}
+                cells={securities.map((security) => percentRatio(security.valuation.roe, locale))}
+                tones={securities.map((security) => toneClass(security.valuation.roe))}
+              />
+              <MetricRow
+                label={t.screenerDebtEquity}
+                cells={securities.map((security) => ratioX(security.valuation.debtEquity, locale))}
+              />
             </tbody>
           </table>
         </div>
@@ -224,4 +266,39 @@ function formatVolume(value: number | null, locale: Locale) {
   return new Intl.NumberFormat(locale === 'ar' ? 'ar-MA' : locale === 'fr' ? 'fr-MA' : 'en-MA', {
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function intlLocale(locale: Locale) {
+  return locale === 'ar' ? 'ar-MA' : locale === 'fr' ? 'fr-MA' : 'en-MA';
+}
+
+function compactMoney(value: number | null, locale: Locale) {
+  if (value === null || !Number.isFinite(value)) return '—';
+  const formatted = new Intl.NumberFormat(intlLocale(locale), {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value);
+  return `${formatted} MAD`;
+}
+
+function ratioX(value: number | null, locale: Locale) {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return `${new Intl.NumberFormat(intlLocale(locale), { maximumFractionDigits: 2 }).format(value)}x`;
+}
+
+// Ratio fields (revenueGrowth, netMargin, roe, ...) are stored as fractions (0.15 = 15%), unlike
+// daily_change_percent which already arrives pre-multiplied -- this deliberately does not reuse
+// formatPercent above, which would misrender a 0.15 ratio as "0.15%".
+function percentRatio(value: number | null, locale: Locale) {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return new Intl.NumberFormat(intlLocale(locale), {
+    style: 'percent',
+    maximumFractionDigits: 1,
+    signDisplay: 'exceptZero',
+  }).format(value);
+}
+
+function toneClass(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return '';
+  return value >= 0 ? 'positive' : 'negative';
 }

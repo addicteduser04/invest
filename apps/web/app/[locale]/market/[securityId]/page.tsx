@@ -8,8 +8,10 @@ import { PublicNav } from '@/components/public/public-nav';
 import { PublicFooter } from '@/components/public/public-footer';
 import { SecurityFundamentalsSection } from '@/components/security-fundamentals-section';
 import { SecurityValuationSection } from '@/components/security-valuation-section';
+import { SecurityPeerSection } from '@/components/security-peer-section';
 import { readSecurityFundamentals } from '@/lib/fundamentals-read';
 import { readValuationSnapshots } from '@/lib/valuation-read';
+import { readPeerComparison } from '@/lib/peer-read';
 
 type PeriodKey = '1M' | '3M' | 'YTD' | '1Y' | '3Y';
 
@@ -168,8 +170,11 @@ export default async function SecurityPage({
   const security = securityResult.data as SecurityRow | null;
   if (!security) notFound();
 
-  const valuationMap = await readValuationSnapshots([
-    { id: security.id, latestPrice: security.latest_close_price, priceDate: security.latest_market_date },
+  const [valuationMap, peerComparison] = await Promise.all([
+    readValuationSnapshots([
+      { id: security.id, latestPrice: security.latest_close_price, priceDate: security.latest_market_date },
+    ]),
+    readPeerComparison(security.id),
   ]);
   const valuation = valuationMap.get(security.id)!;
 
@@ -331,6 +336,12 @@ export default async function SecurityPage({
       <section className="security-v2-fundamentals">
         <SecurityValuationSection locale={locale} valuation={valuation} />
       </section>
+
+      {peerComparison ? (
+        <section className="security-v2-fundamentals">
+          <SecurityPeerSection locale={locale} comparison={peerComparison} />
+        </section>
+      ) : null}
 
       <section className="security-v2-info">
         <div>

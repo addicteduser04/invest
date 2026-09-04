@@ -1631,6 +1631,16 @@ body {
   color: #071917;
   font-weight: 800;
 }
+.compare-v2-matrix-divider th {
+  padding-top: 20px;
+  border-top: 2px solid rgba(9, 24, 21, 0.16);
+  color: var(--green);
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: start;
+}
 .compare-v2-matrix-head {
   display: inline-flex;
   align-items: center;
@@ -3941,6 +3951,82 @@ button {
    than the viewport. */
 .security-v2-fundamentals .security-v2-panel {
   min-width: 0;
+}
+.peer-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px 22px;
+  margin-top: 18px;
+  margin-bottom: 24px;
+}
+.peer-summary-tile {
+  display: grid;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid rgba(9, 24, 21, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.62);
+}
+.peer-summary-tile > span:first-child {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 760;
+}
+.peer-summary-tile strong {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #10281f;
+}
+.peer-summary-tile small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+/* Neutral position visualization: a single accent dot marks the target, a plain tick marks the
+   sector median. Colour is not tied to "good/bad" -- the same accent is used regardless of
+   whether the target sits above or below the median. */
+.peer-bar-track {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(9, 24, 21, 0.12);
+  margin: 8px 2px 2px;
+}
+.peer-bar-median {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 14px;
+  background: rgba(9, 24, 21, 0.45);
+  transform: translate(-50%, -50%);
+}
+.peer-bar-target {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--green-2);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9);
+}
+.peer-table thead th {
+  white-space: nowrap;
+}
+.peer-table td small {
+  color: var(--muted);
+  font-weight: 650;
+}
+.peer-table-target-row {
+  background: rgba(29, 98, 75, 0.07);
+  font-weight: 800;
+}
+.peer-table-target-row td {
+  color: #10281f;
+}
+.peer-table-median-row {
+  border-top: 2px solid rgba(9, 24, 21, 0.18);
+  color: var(--muted);
+  font-style: italic;
 }
 .security-v2-info {
   display: grid;
