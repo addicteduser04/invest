@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { asLocale, direction, getUi } from '@/lib/i18n';
 import { PublicNav } from '@/components/public/public-nav';
 import { PublicFooter } from '@/components/public/public-footer';
-import { AdminMarketImport } from '@/components/admin-market-import';
+import { AdminCsvImports } from '@/components/admin-csv-imports';
 
 export default async function ImportPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale: rawLocale } = await params;
@@ -28,18 +28,18 @@ export default async function ImportPage({ params }: { params: Promise<{ locale:
       <div className="admin-v2-hero">
         <div>
           <p className="public-eyebrow">{t.adminEyebrow}</p>
-          <h1>{t.adminPriceImportsTitle}</h1>
+          <h1>{t.adminDataImportsTitle}</h1>
+          <p className="admin-v2-subtitle">{t.adminDataImportsSubtitle}</p>
         </div>
         <a href={`/${locale}/admin/securities`}>{t.adminSecurityMasterLink}</a>
         <a href={`/${locale}/admin/market-data`}>{t.adminMarketDataLink}</a>
         <a href={`/${locale}/admin/fundamentals`}>{t.adminFundamentalsLink}</a>
       </div>
-      <p className="admin-v2-notice">{t.adminPriceImportsNotice}</p>
+      <p className="admin-v2-notice admin-v2-notice-strong">{t.adminPriceImportsNotice}</p>
       <div className="admin-v2-body">
-        <AdminMarketImport
+        <AdminCsvImports
           locale={locale}
           currentUserId={user.id}
-          bvcTestingEnabled={process.env.BVC_PUBLIC_TESTING_ENABLED === 'true'}
           runs={
             (runs ?? []) as {
               id: string;

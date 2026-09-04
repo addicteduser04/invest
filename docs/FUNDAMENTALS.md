@@ -17,11 +17,14 @@ blob:
 - **Balance sheet**: `cash_and_equivalents`, `total_debt`, `total_assets`, `total_equity`.
 - **Cash flow**: `operating_cash_flow`, `capex`.
 - **Capital**: `shares_outstanding`, `dividend_per_share`.
+- **DCF-only optional fields** (added by `supabase/migrations/202609040001_dcf_valuation.sql`,
+  the minimal extension anticipated by the original design): `depreciation_amortization`,
+  `tax_expense`, `working_capital`, `change_in_working_capital`. All nullable, `numeric(20,6)`,
+  no sign constraint (each can legitimately be negative). See `docs/DCF.md` for how they feed the
+  DCF historical-input model.
 
 All monetary columns are `numeric(20,6)`; `shares_outstanding` is `numeric(24,0)` (matches
-`market.securities.share_count`'s precision). No D&A / working-capital / tax-rate columns exist
-yet — they aren't in this milestone's required field list, and adding unused nullable columns
-now would be speculative. A future `alter table` can add them once a real input source exists.
+`market.securities.share_count`'s precision).
 
 Access follows the same convention as every other `market` schema table: no direct RLS policies,
 no PostgREST exposure of the `market` schema at all. Writes go through the `data_admin`-gated
@@ -70,8 +73,14 @@ One row per company/period. Header:
 ```
 ticker,period_end_date,publication_date,period_type,interim_period,currency,
 revenue,ebitda,ebit,net_income,eps,cash,total_debt,total_assets,total_equity,
-operating_cash_flow,capex,shares_outstanding,dividend_per_share
+operating_cash_flow,capex,shares_outstanding,dividend_per_share,
+depreciation_amortization,tax_expense,working_capital,change_in_working_capital
 ```
+
+The last four columns are optional DCF inputs and may be omitted entirely — a CSV uploaded before
+they existed (fewer trailing columns than the current header) still parses correctly
+(`relax_column_count`); any row simply missing the columns leaves them `null`, exactly like any
+other blank cell.
 
 - `ticker` must resolve to a known security (via the public security directory) or the row is
   rejected.

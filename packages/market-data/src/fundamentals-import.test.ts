@@ -7,7 +7,7 @@ const securities = [
 ];
 
 const header =
-  'ticker,period_end_date,publication_date,period_type,interim_period,currency,revenue,ebitda,ebit,net_income,eps,cash,total_debt,total_assets,total_equity,operating_cash_flow,capex,shares_outstanding,dividend_per_share';
+  'ticker,period_end_date,publication_date,period_type,interim_period,currency,revenue,ebitda,ebit,net_income,eps,cash,total_debt,total_assets,total_equity,operating_cash_flow,capex,shares_outstanding,dividend_per_share,depreciation_amortization,tax_expense,working_capital,change_in_working_capital';
 
 describe('fundamentals CSV preview', () => {
   it('accepts a valid annual row, including negative net income and equity', () => {
@@ -135,6 +135,31 @@ describe('fundamentals CSV preview', () => {
       willUpdate: 1,
     });
     expect(preview.canConfirm).toBe(true);
+  });
+
+  it('accepts the four optional DCF fields, including negative values', () => {
+    const csv = `${header}\nSYN-IAM,2025-12-31,2026-02-15,annual,,MAD,1000,300,250,150,1.5,120,400,900,600,80,60,1000000,0,120,60,-30,-10`;
+    const preview = previewFundamentalsCsv(csv, securities, []);
+    expect(preview.canConfirm).toBe(true);
+    const candidate = preview.rows[0]?.candidate;
+    expect(candidate?.depreciationAmortization).toBe('120');
+    expect(candidate?.taxExpense).toBe('60');
+    expect(candidate?.workingCapital).toBe('-30');
+    expect(candidate?.changeInWorkingCapital).toBe('-10');
+  });
+
+  it('parses a CSV uploaded before the DCF columns existed (fewer trailing columns than the current header)', () => {
+    const legacyHeader =
+      'ticker,period_end_date,publication_date,period_type,interim_period,currency,revenue,ebitda,ebit,net_income,eps,cash,total_debt,total_assets,total_equity,operating_cash_flow,capex,shares_outstanding,dividend_per_share';
+    const csv = `${legacyHeader}\nSYN-IAM,2025-12-31,,annual,,MAD,1000,,,,,,,,,,,,`;
+    const preview = previewFundamentalsCsv(csv, securities, []);
+    expect(preview.canConfirm).toBe(true);
+    const candidate = preview.rows[0]?.candidate;
+    expect(candidate?.revenue).toBe('1000');
+    expect(candidate?.depreciationAmortization).toBeUndefined();
+    expect(candidate?.taxExpense).toBeUndefined();
+    expect(candidate?.workingCapital).toBeUndefined();
+    expect(candidate?.changeInWorkingCapital).toBeUndefined();
   });
 
   it('rejects a malformed CSV file and an empty file', () => {

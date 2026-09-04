@@ -60,6 +60,10 @@ export async function POST(request: Request) {
       capex: c.capex ?? '',
       sharesOutstanding: c.sharesOutstanding ?? '',
       dividendPerShare: c.dividendPerShare ?? '',
+      depreciationAmortization: c.depreciationAmortization ?? '',
+      taxExpense: c.taxExpense ?? '',
+      workingCapital: c.workingCapital ?? '',
+      changeInWorkingCapital: c.changeInWorkingCapital ?? '',
     }));
 
   const { data, error } = await supabase.rpc('apply_fundamentals_import', {

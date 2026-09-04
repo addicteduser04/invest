@@ -1106,6 +1106,10 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
         capex: '80',
         sharesOutstanding: '1000000',
         dividendPerShare: '0.5',
+        depreciationAmortization: '90',
+        taxExpense: '50',
+        workingCapital: '-120',
+        changeInWorkingCapital: '-15',
         ...overrides,
       };
     }
@@ -1214,6 +1218,55 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
       expect(listResult.rows).toEqual([]);
     });
 
+    it('accepts and round-trips the four optional DCF fields (including negative values) through the public view', async () => {
+      await applyImport([
+        fundamentalsRow({
+          periodEndDate: '2028-12-31',
+          publicationDate: '2029-02-01',
+          depreciationAmortization: '-5',
+          taxExpense: '-10',
+          workingCapital: '-200',
+          changeInWorkingCapital: '-25',
+        }),
+      ]);
+      const view = await asUser<{
+        depreciation_amortization: string;
+        tax_expense: string;
+        working_capital: string;
+        change_in_working_capital: string;
+      }>(
+        null,
+        'select depreciation_amortization,tax_expense,working_capital,change_in_working_capital from public.security_fundamentals where security_id=$1 and period_end_date=$2',
+        [securityId, '2028-12-31'],
+      );
+      expect(view.rows[0]).toMatchObject({
+        depreciation_amortization: '-5.000000',
+        tax_expense: '-10.000000',
+        working_capital: '-200.000000',
+        change_in_working_capital: '-25.000000',
+      });
+    });
+
+    it('leaves the four optional DCF fields null when omitted, never coercing to zero', async () => {
+      await applyImport([
+        fundamentalsRow({
+          periodEndDate: '2029-12-31',
+          publicationDate: '2030-02-01',
+          depreciationAmortization: undefined,
+          taxExpense: undefined,
+          workingCapital: undefined,
+          changeInWorkingCapital: undefined,
+        }),
+      ]);
+      const view = await asUser<{ depreciation_amortization: string | null; tax_expense: string | null }>(
+        null,
+        'select depreciation_amortization,tax_expense from public.security_fundamentals where security_id=$1 and period_end_date=$2',
+        [securityId, '2029-12-31'],
+      );
+      expect(view.rows[0]!.depreciation_amortization).toBeNull();
+      expect(view.rows[0]!.tax_expense).toBeNull();
+    });
+
     it('exposes fundamentals to anon/authenticated only through the public view, not the raw table', async () => {
       await applyImport([
         fundamentalsRow({ periodEndDate: '2030-12-31', publicationDate: '2031-01-01' }),
@@ -1230,6 +1283,214 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
       await expect(asUser(ids.userA, 'select 1 from market.fundamentals limit 1')).rejects.toThrow(
         /permission denied/,
       );
+    });
+  });
+
+  describe.sequential('CSV price import: two-admin review', () => {
+    // Two dedicated throwaway admin identities, not ids.admin/userA/userB: market.ingestion_runs
+    // is append-only (private.prevent_mutation(), same guard as fundamentals_import_runs) and
+    // proposed_by/reviewed_by have no cascade, so once a run references an actor that actor's
+    // profile can never be deleted again -- scoping to throwaway identities keeps the outer
+    // suite's own auth.users cleanup unaffected.
+    const uploaderAdmin = randomUUID();
+    const reviewerAdmin = randomUUID();
+
+    beforeAll(async () => {
+      await adminClient.query(
+        `insert into auth.users(id, instance_id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+         select id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', id::text || '@example.test', '', '{}', '{}', now(), now()
+         from (values ($1::uuid),($2::uuid)) u(id)`,
+        [uploaderAdmin, reviewerAdmin],
+      );
+      await adminClient.query(
+        "insert into public.user_roles(user_id,role) values($1,'data_admin'),($2,'data_admin')",
+        [uploaderAdmin, reviewerAdmin],
+      );
+    });
+
+    function candidateRow(overrides: Record<string, unknown> = {}) {
+      return {
+        row: 1,
+        ticker: 'SYN-IAM',
+        marketDate: '2031-03-17',
+        close: '120.50',
+        ...overrides,
+      };
+    }
+
+    async function propose(userId: string, candidates: Record<string, unknown>[]) {
+      const sourceHash = createHash('sha256').update(randomUUID()).digest('hex');
+      return asUser<{ propose_market_price_import: string }>(
+        userId,
+        'select public.propose_market_price_import($1,$2,$3,$4,$5,$6)',
+        [
+          sourceHash,
+          'two-admin-test.csv',
+          JSON.stringify({ date: 'time', ticker: 'symbol', close: 'close' }),
+          JSON.stringify({}),
+          `time,symbol,close\n${candidates[0]?.['marketDate']},${candidates[0]?.['ticker']},${candidates[0]?.['close']}`,
+          JSON.stringify(candidates),
+        ],
+      );
+    }
+
+    it('rejects an unauthenticated or investor caller from proposing or publishing', async () => {
+      await expect(propose(ids.userA, [candidateRow()])).rejects.toThrow(/FORBIDDEN/);
+      await expect(
+        asUser(null, 'select public.publish_market_price_import($1,$2)', [randomUUID(), 'x']),
+      ).rejects.toThrow(/permission denied|FORBIDDEN/);
+    });
+
+    it('quarantines a run that references an unknown ticker (invalid CSV), and still forbids publishing it', async () => {
+      const proposed = await propose(uploaderAdmin, [candidateRow({ ticker: 'NOT-A-REAL-TICKER' })]);
+      const runId = proposed.rows[0]!.propose_market_price_import;
+      const status = await adminClient.query<{ status: string }>(
+        'select status from market.ingestion_runs where id=$1',
+        [runId],
+      );
+      expect(status.rows[0]!.status).toBe('quarantined');
+      await expect(
+        asUser(reviewerAdmin, 'select public.publish_market_price_import($1,$2)', [
+          runId,
+          'attempt on quarantined run',
+        ]),
+      ).rejects.toThrow(/IMPORT_NOT_PUBLISHABLE|UNKNOWN_SECURITY/);
+    });
+
+    it('forbids the same admin who proposed the import from publishing it themselves', async () => {
+      const proposed = await propose(uploaderAdmin, [candidateRow({ marketDate: '2031-03-18' })]);
+      const runId = proposed.rows[0]!.propose_market_price_import;
+      await expect(
+        asUser(uploaderAdmin, 'select public.publish_market_price_import($1,$2)', [
+          runId,
+          'self-approval attempt',
+        ]),
+      ).rejects.toThrow(/SECOND_ADMIN_REQUIRED/);
+    });
+
+    it('lets a distinct eligible data_admin publish, inserting published prices and marking the run published', async () => {
+      const proposed = await propose(uploaderAdmin, [candidateRow({ marketDate: '2031-03-19', close: '121.00' })]);
+      const runId = proposed.rows[0]!.propose_market_price_import;
+      const result = await asUser<{
+        publish_market_price_import: { status: string; publishedRows: number };
+      }>(reviewerAdmin, 'select public.publish_market_price_import($1,$2)', [
+        runId,
+        'reviewed and approved',
+      ]);
+      expect(result.rows[0]!.publish_market_price_import).toMatchObject({
+        status: 'published',
+        publishedRows: 1,
+      });
+      const run = await adminClient.query<{ status: string; reviewed_by: string }>(
+        'select status,reviewed_by from market.ingestion_runs where id=$1',
+        [runId],
+      );
+      expect(run.rows[0]).toMatchObject({ status: 'published', reviewed_by: reviewerAdmin });
+      // Scoped to this run's own ingestion_run_id, not just security+date: this suite may run
+      // repeatedly against a persistent local database (no reset between runs), so a bare
+      // security+date query could also match a superseded row from an earlier run.
+      const price = await adminClient.query<{ status: string }>(
+        'select status from market.prices where ingestion_run_id=$1',
+        [runId],
+      );
+      expect(price.rows[0]!.status).toBe('published');
+    });
+
+    it('supersedes the prior published price when a later approved import covers the same security and date', async () => {
+      const first = await propose(uploaderAdmin, [candidateRow({ marketDate: '2031-03-21', close: '100.00' })]);
+      const firstRunId = first.rows[0]!.propose_market_price_import;
+      await asUser(reviewerAdmin, 'select public.publish_market_price_import($1,$2)', [
+        firstRunId,
+        'first publish',
+      ]);
+      const second = await propose(uploaderAdmin, [candidateRow({ marketDate: '2031-03-21', close: '105.00' })]);
+      const secondRunId = second.rows[0]!.propose_market_price_import;
+      await asUser(reviewerAdmin, 'select public.publish_market_price_import($1,$2)', [
+        secondRunId,
+        'correcting publish',
+      ]);
+      // Scoped to exactly these two runs' own ingestion_run_id (not a bare security+date query,
+      // which could also match rows left by an earlier execution of this same suite against a
+      // persistent, non-reset local database).
+      const firstPrice = await adminClient.query<{ status: string; close_price: string }>(
+        'select status,close_price from market.prices where ingestion_run_id=$1',
+        [firstRunId],
+      );
+      const secondPrice = await adminClient.query<{ status: string; close_price: string }>(
+        'select status,close_price from market.prices where ingestion_run_id=$1',
+        [secondRunId],
+      );
+      const prices = { rows: [firstPrice.rows[0]!, secondPrice.rows[0]!] };
+      expect(prices.rows).toHaveLength(2);
+      expect(prices.rows[0]).toMatchObject({ status: 'superseded' });
+      expect(Number(prices.rows[0]!.close_price)).toBeCloseTo(100, 6);
+      expect(prices.rows[1]).toMatchObject({ status: 'published' });
+      expect(Number(prices.rows[1]!.close_price)).toBeCloseTo(105, 6);
+    });
+  });
+
+  describe.sequential('DCF scenarios', () => {
+    afterAll(async () => {
+      await adminClient.query('delete from public.dcf_scenarios where user_id=any($1::uuid[])', [
+        [ids.userA, ids.userB],
+      ]);
+    });
+
+    it('lets an investor create and update their own scenario', async () => {
+      const created = await asUser<{ id: string }>(
+        ids.userA,
+        "insert into public.dcf_scenarios(user_id,security_id,name,assumptions) values($1,$2,'Base case','{\"wacc\":0.1}'::jsonb) returning id",
+        [ids.userA, securityId],
+      );
+      const scenarioId = created.rows[0]!.id;
+
+      const updated = await asUser<{ assumptions: { wacc: number } }>(
+        ids.userA,
+        "update public.dcf_scenarios set assumptions='{\"wacc\":0.11}'::jsonb where id=$1 returning assumptions",
+        [scenarioId],
+      );
+      expect(updated.rows[0]!.assumptions).toEqual({ wacc: 0.11 });
+    });
+
+    it("never lets another investor read or update someone else's scenario", async () => {
+      const created = await asUser<{ id: string }>(
+        ids.userA,
+        "insert into public.dcf_scenarios(user_id,security_id,name,assumptions) values($1,$2,'Private','{}'::jsonb) returning id",
+        [ids.userA, securityId],
+      );
+      const scenarioId = created.rows[0]!.id;
+
+      const foreignRead = await asUser(ids.userB, 'select id from public.dcf_scenarios where id=$1', [
+        scenarioId,
+      ]);
+      expect(foreignRead.rows).toEqual([]);
+
+      const foreignUpdate = await asUser(
+        ids.userB,
+        "update public.dcf_scenarios set name='hijacked' where id=$1",
+        [scenarioId],
+      );
+      expect(foreignUpdate.rowCount).toBe(0);
+
+      const stillOriginal = await asUser<{ name: string }>(
+        ids.userA,
+        'select name from public.dcf_scenarios where id=$1',
+        [scenarioId],
+      );
+      expect(stillOriginal.rows[0]!.name).toBe('Private');
+    });
+
+    it('denies anonymous access entirely', async () => {
+      await expect(asUser(null, 'select 1 from public.dcf_scenarios limit 1')).rejects.toThrow(
+        /permission denied/,
+      );
+      await expect(
+        asUser(
+          null,
+          "insert into public.dcf_scenarios(user_id,security_id,name,assumptions) values($1,$2,'x','{}'::jsonb)",
+          [ids.userA, securityId],
+        ),
+      ).rejects.toThrow(/permission denied/);
     });
   });
 });

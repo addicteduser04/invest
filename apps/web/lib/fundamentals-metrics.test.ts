@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  changeInWorkingCapital,
   debtToEquity,
   ebitMargin,
   ebitdaGrowth,
   ebitdaMargin,
+  effectiveTaxRate,
   epsGrowth,
   fcfMargin,
   freeCashFlow,
@@ -118,5 +120,42 @@ describe('growth rates', () => {
     expect(revenueGrowth(figures({ revenue: '1100' }), figures({ revenue: null }))).toBeNull();
     expect(revenueGrowth(figures({ revenue: '1100' }), figures({ revenue: '0' }))).toBeNull();
     expect(ebitdaGrowth(figures({ ebitda: '330' }), null)).toBeNull();
+  });
+});
+
+describe('changeInWorkingCapital', () => {
+  it('diffs current minus prior working capital', () => {
+    expect(
+      changeInWorkingCapital({ workingCapital: '-1800' }, { workingCapital: '-2200' }),
+    ).toBeCloseTo(400, 10);
+  });
+  it('is null when either period is missing working capital or there is no prior period', () => {
+    expect(changeInWorkingCapital({ workingCapital: '-1800' }, null)).toBeNull();
+    expect(
+      changeInWorkingCapital({ workingCapital: '-1800' }, { workingCapital: null }),
+    ).toBeNull();
+    expect(changeInWorkingCapital({ workingCapital: null }, { workingCapital: '-2200' })).toBeNull();
+  });
+});
+
+describe('effectiveTaxRate', () => {
+  it('derives pre-tax income from net income + tax expense (an exact identity, not an invention)', () => {
+    expect(effectiveTaxRate({ netIncome: '7200', taxExpense: '3000' })).toBeCloseTo(
+      3000 / 10200,
+      10,
+    );
+  });
+  it('is null when tax_expense is not reported (never falls back to inventing one)', () => {
+    expect(effectiveTaxRate({ netIncome: '7200', taxExpense: null })).toBeNull();
+  });
+  it('is null when net_income is missing or pre-tax income is exactly zero', () => {
+    expect(effectiveTaxRate({ netIncome: null, taxExpense: '3000' })).toBeNull();
+    expect(effectiveTaxRate({ netIncome: '-3000', taxExpense: '3000' })).toBeNull();
+  });
+  it('can be negative during a pre-tax loss year that still carries tax expense', () => {
+    expect(effectiveTaxRate({ netIncome: '-1200', taxExpense: '200' })).toBeCloseTo(
+      200 / -1000,
+      10,
+    );
   });
 });

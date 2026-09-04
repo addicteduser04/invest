@@ -35,6 +35,10 @@ export interface FundamentalsCandidate {
   capex?: string;
   sharesOutstanding?: string;
   dividendPerShare?: string;
+  depreciationAmortization?: string;
+  taxExpense?: string;
+  workingCapital?: string;
+  changeInWorkingCapital?: string;
 }
 
 export interface FundamentalsPreviewRow {
@@ -115,10 +119,15 @@ export function previewFundamentalsCsv(
   const sourceHash = createHash('sha256').update(input).digest('hex');
   let records: Record<string, string>[];
   try {
-    records = parse(input, { columns: true, skip_empty_lines: true, trim: true }) as Record<
-      string,
-      string
-    >[];
+    // relax_column_count: a CSV uploaded before the DCF optional columns existed has fewer
+    // fields than the current header and must keep working -- missing trailing fields simply
+    // read as undefined below, handled the same as any other blank optional cell.
+    records = parse(input, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_column_count: true,
+    }) as Record<string, string>[];
   } catch {
     return {
       sourceHash,
@@ -238,6 +247,33 @@ export function previewFundamentalsCsv(
       row,
       errors,
     );
+    // DCF-only optional fields: same blank-stays-null, negatives-accepted convention as every
+    // other income/balance/cash-flow figure above -- none of them are structurally constrained
+    // to be non-negative (D&A, tax expense, working capital and its change can all be negative).
+    const depreciationAmortization = signedDecimal(
+      String(record['depreciation_amortization'] ?? '').trim(),
+      'depreciation_amortization',
+      row,
+      errors,
+    );
+    const taxExpense = signedDecimal(
+      String(record['tax_expense'] ?? '').trim(),
+      'tax_expense',
+      row,
+      errors,
+    );
+    const workingCapital = signedDecimal(
+      String(record['working_capital'] ?? '').trim(),
+      'working_capital',
+      row,
+      errors,
+    );
+    const changeInWorkingCapital = signedDecimal(
+      String(record['change_in_working_capital'] ?? '').trim(),
+      'change_in_working_capital',
+      row,
+      errors,
+    );
 
     let candidate: FundamentalsCandidate | undefined;
     if (securityId && validPeriodEnd && !errors.length) {
@@ -274,6 +310,10 @@ export function previewFundamentalsCsv(
           ...(capex !== undefined ? { capex } : {}),
           ...(sharesOutstanding !== undefined ? { sharesOutstanding } : {}),
           ...(dividendPerShare !== undefined ? { dividendPerShare } : {}),
+          ...(depreciationAmortization !== undefined ? { depreciationAmortization } : {}),
+          ...(taxExpense !== undefined ? { taxExpense } : {}),
+          ...(workingCapital !== undefined ? { workingCapital } : {}),
+          ...(changeInWorkingCapital !== undefined ? { changeInWorkingCapital } : {}),
         };
       }
     }

@@ -9,9 +9,12 @@ import { PublicFooter } from '@/components/public/public-footer';
 import { SecurityFundamentalsSection } from '@/components/security-fundamentals-section';
 import { SecurityValuationSection } from '@/components/security-valuation-section';
 import { SecurityPeerSection } from '@/components/security-peer-section';
+import { SecurityDcfSection, type SavedDcfScenario } from '@/components/security-dcf-section';
 import { readSecurityFundamentals } from '@/lib/fundamentals-read';
 import { readValuationSnapshots } from '@/lib/valuation-read';
 import { readPeerComparison } from '@/lib/peer-read';
+import { readDcfHistoricalInputs } from '@/lib/dcf-inputs';
+import { deriveDcfDefaults } from '@/lib/dcf-defaults';
 
 type PeriodKey = '1M' | '3M' | 'YTD' | '1Y' | '3Y';
 
@@ -170,13 +173,30 @@ export default async function SecurityPage({
   const security = securityResult.data as SecurityRow | null;
   if (!security) notFound();
 
-  const [valuationMap, peerComparison] = await Promise.all([
+  const [valuationMap, peerComparison, dcfHistoricalInputs, savedScenariosResult] = await Promise.all([
     readValuationSnapshots([
       { id: security.id, latestPrice: security.latest_close_price, priceDate: security.latest_market_date },
     ]),
     readPeerComparison(security.id),
+    readDcfHistoricalInputs(security.id),
+    user
+      ? supabase
+          .from('dcf_scenarios')
+          .select('id,name,assumptions,updated_at')
+          .eq('security_id', security.id)
+          .order('updated_at', { ascending: false })
+      : Promise.resolve({ data: [] as SavedDcfScenario[] }),
   ]);
   const valuation = valuationMap.get(security.id)!;
+  const dcfDefaults = deriveDcfDefaults(dcfHistoricalInputs.periods);
+  const savedDcfScenarios: SavedDcfScenario[] = (
+    (savedScenariosResult.data ?? []) as Array<{
+      id: string;
+      name: string;
+      assumptions: unknown;
+      updated_at: string;
+    }>
+  ).map((row) => ({ id: row.id, name: row.name, assumptions: row.assumptions, updatedAt: row.updated_at }));
 
   const history = ((historyResult.data ?? []) as HistoryRow[]).reverse();
   const indices = (indicesResult.data ?? []) as IndexRow[];
@@ -342,6 +362,22 @@ export default async function SecurityPage({
           <SecurityPeerSection locale={locale} comparison={peerComparison} />
         </section>
       ) : null}
+
+      <section className="security-v2-fundamentals">
+        <SecurityDcfSection
+          locale={locale}
+          securityId={security.id}
+          historicalInputs={dcfHistoricalInputs}
+          defaults={dcfDefaults}
+          currentPrice={{
+            price: valuation.price,
+            priceDate: valuation.priceDate,
+            stale: valuation.priceStale,
+          }}
+          authenticated={Boolean(user)}
+          initialSavedScenarios={savedDcfScenarios}
+        />
+      </section>
 
       <section className="security-v2-info">
         <div>

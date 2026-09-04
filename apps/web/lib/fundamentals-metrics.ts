@@ -104,3 +104,45 @@ export function epsGrowth(
 ) {
   return growthRate(current.eps, prior?.eps ?? null);
 }
+
+/**
+ * DCF-only optional figures. Kept as a separate narrow type rather than added to
+ * FundamentalsFigures above so the existing (frozen) fundamentals/valuation/peer read models
+ * never have to know about them.
+ */
+export interface DcfOptionalFigures {
+  depreciationAmortization: string | null;
+  taxExpense: string | null;
+  workingCapital: string | null;
+  changeInWorkingCapital: string | null;
+}
+
+/** Change in NWC, derived from two consecutive periods' working_capital. The caller is
+ * responsible for only passing a `prior` period that matches `current`'s period_type/
+ * interim_period -- this function does not know about periods at all, so it never risks diffing
+ * an annual figure against an interim one. Prefer a directly-reported change_in_working_capital
+ * value over this derivation when one exists (see dcf-inputs.ts). */
+export function changeInWorkingCapital(
+  current: Pick<DcfOptionalFigures, 'workingCapital'>,
+  prior: Pick<DcfOptionalFigures, 'workingCapital'> | null,
+): number | null {
+  const c = toNumber(current.workingCapital);
+  const p = toNumber(prior?.workingCapital ?? null);
+  if (c === null || p === null) return null;
+  return c - p;
+}
+
+/** Effective tax rate = tax_expense / pre-tax income, where pre-tax income = net_income +
+ * tax_expense -- an exact identity from two genuine reported figures, never invented from
+ * net_income alone. Null whenever either input is missing, or pre-tax income is exactly zero
+ * (the rate would be undefined or economically meaningless). */
+export function effectiveTaxRate(
+  f: Pick<FundamentalsFigures, 'netIncome'> & Pick<DcfOptionalFigures, 'taxExpense'>,
+): number | null {
+  const netIncome = toNumber(f.netIncome);
+  const taxExpense = toNumber(f.taxExpense);
+  if (netIncome === null || taxExpense === null) return null;
+  const preTaxIncome = netIncome + taxExpense;
+  if (preTaxIncome === 0) return null;
+  return taxExpense / preTaxIncome;
+}

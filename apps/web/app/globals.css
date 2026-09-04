@@ -3635,14 +3635,28 @@ button {
 }
 .approval-control {
   display: flex;
+  flex-wrap: wrap;
   gap: 7px;
   align-items: center;
 }
 .approval-control input {
   min-width: 180px;
+  flex: 1;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+@media (max-width: 480px) {
+  .approval-control {
+    width: 100%;
+  }
+  .approval-control input {
+    width: 100%;
+    min-width: 0;
+  }
+  .approval-control button {
+    width: 100%;
+  }
 }
 .period-tabs {
   display: flex;
@@ -3686,18 +3700,6 @@ button {
   color: var(--muted);
   font-size: 0.76rem;
 }
-.data-availability-check {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 0 8px;
-  color: var(--muted);
-  font-size: 0.78rem;
-}
-.data-availability-check input {
-  width: auto;
-}
-
 .ai-insight {
   display: grid;
   gap: 12px;
@@ -3721,22 +3723,6 @@ button {
 }
 .warning-list {
   color: var(--warning);
-}
-/* BVC testing connector and TradingView Lightweight Charts integration */
-.bvc-testing-form {
-  margin-top: 16px;
-}
-.bvc-preview-result {
-  display: grid;
-  gap: 10px;
-  margin-top: 16px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface-soft);
-}
-.bvc-preview-result > small {
-  color: var(--muted);
 }
 .security-v2-page {
   background: radial-gradient(circle at 12% 0%, rgba(13, 78, 58, 0.08), transparent 30%), #f7f5ee;
@@ -4028,6 +4014,228 @@ button {
   color: var(--muted);
   font-style: italic;
 }
+
+.dcf-section .security-v2-section-head {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.dcf-scenario-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(9, 24, 21, 0.06);
+}
+.dcf-scenario-tab {
+  border: none;
+  background: transparent;
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-weight: 750;
+  font-size: 0.78rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.dcf-scenario-tab.active {
+  background: #10281f;
+  color: #fff;
+}
+.dcf-issues {
+  margin: 12px 0 18px;
+  padding: 14px 16px;
+  border: 1px solid rgba(184, 62, 62, 0.25);
+  border-radius: 8px;
+  background: rgba(184, 62, 62, 0.06);
+}
+.dcf-issues ul {
+  margin: 0;
+  padding-inline-start: 18px;
+  color: #7a2626;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.dcf-headline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px 22px;
+  margin: 18px 0 24px;
+}
+.dcf-headline article {
+  display: grid;
+  gap: 4px;
+  padding: 16px;
+  border: 1px solid rgba(9, 24, 21, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.62);
+}
+.dcf-headline article span:first-child {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 760;
+}
+.dcf-headline article strong {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #10281f;
+}
+.dcf-headline article small {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.dcf-assumptions {
+  margin-bottom: 24px;
+}
+.dcf-assumptions h3,
+.dcf-forecast h3,
+.dcf-bridge h3,
+.dcf-sensitivity h3,
+.dcf-scenarios-panel h3 {
+  margin: 0 0 12px;
+  font-size: 1rem;
+  color: #10281f;
+}
+.dcf-base-inputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px 16px;
+  margin-bottom: 8px;
+}
+.dcf-base-inputs label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+.dcf-base-period-note {
+  margin: 0 0 14px;
+}
+.dcf-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid rgba(9, 24, 21, 0.18);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  font-weight: 700;
+  color: #10281f;
+}
+.dcf-assumption-grid {
+  display: grid;
+  gap: 10px;
+}
+.dcf-assumption-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(160px, 1.4fr) minmax(140px, 0.8fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(9, 24, 21, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.5);
+}
+.dcf-assumption-label {
+  font-weight: 750;
+  font-size: 0.85rem;
+  color: #10281f;
+}
+.dcf-assumption-historical {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.dcf-assumption-forecast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: end;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+.dcf-field-unit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.dcf-field-unit .dcf-input {
+  width: 84px;
+}
+.dcf-forecast,
+.dcf-bridge,
+.dcf-sensitivity,
+.dcf-scenarios-panel {
+  margin-top: 26px;
+}
+.dcf-forecast-table th,
+.dcf-sensitivity-table th {
+  white-space: nowrap;
+}
+.dcf-bridge-list {
+  margin: 0;
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid rgba(9, 24, 21, 0.12);
+  border-radius: 8px;
+  background: rgba(9, 24, 21, 0.08);
+}
+.dcf-bridge-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #fff;
+}
+.dcf-bridge-list dt {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.dcf-bridge-list dd {
+  margin: 0;
+  font-weight: 750;
+  color: #10281f;
+}
+.dcf-bridge-list .dcf-bridge-total {
+  background: rgba(29, 98, 75, 0.07);
+}
+.dcf-bridge-list .dcf-bridge-total dd {
+  font-weight: 850;
+}
+.dcf-sensitivity-cell.base-case {
+  background: rgba(29, 98, 75, 0.12);
+  font-weight: 850;
+}
+.dcf-scenarios-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.dcf-scenarios-controls .dcf-input {
+  width: auto;
+  min-width: 180px;
+}
+.dcf-disclaimer {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(9, 24, 21, 0.1);
+}
+@media (max-width: 620px) {
+  .dcf-assumption-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .dcf-assumption-forecast {
+    justify-self: start;
+  }
+  .dcf-bridge-list > div {
+    flex-wrap: wrap;
+  }
+}
+
 .security-v2-info {
   display: grid;
   grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
@@ -4798,12 +5006,34 @@ button {
   text-decoration: none;
   font-weight: 800;
 }
+.admin-v2-subtitle {
+  margin: 0;
+  max-width: 640px;
+  color: rgba(17, 35, 30, 0.66);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
 .admin-v2-notice {
   max-width: 1440px;
   margin: 0 auto 24px;
   padding-inline: clamp(20px, 5vw, 76px);
   color: rgba(17, 35, 30, 0.66);
   line-height: 1.5;
+}
+.admin-v2-notice-strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--green);
+  font-weight: 750;
+}
+.admin-v2-notice-strong::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  min-width: 8px;
+  border-radius: 50%;
+  background: var(--green-2);
 }
 .admin-v2-body {
   max-width: 1440px;
@@ -5139,5 +5369,222 @@ button {
   }
   .run-control-actions .button {
     flex: 1;
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* CSV imports admin page                                                 */
+/* ---------------------------------------------------------------------- */
+.csv-import-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  margin-top: 16px;
+}
+.csv-upload-card {
+  max-width: 720px;
+  min-width: 0;
+}
+.csv-history-card {
+  min-width: 0;
+}
+.csv-upload-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.csv-market-data-link {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--green-2);
+  text-decoration: none;
+}
+.csv-market-data-link:hover {
+  text-decoration: underline;
+}
+
+.csv-dropzone {
+  position: relative;
+  margin: 14px 0;
+  padding: 32px 20px;
+  border: 2px dashed rgba(20, 68, 53, 0.28);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.csv-dropzone:hover,
+.csv-dropzone:focus-visible {
+  border-color: var(--green-2);
+  outline: none;
+}
+.csv-dropzone.is-dragover {
+  border-color: var(--green-2);
+  background: var(--green-3);
+}
+.csv-dropzone.has-file {
+  border-style: solid;
+  background: var(--surface);
+  padding: 18px 20px;
+}
+.csv-dropzone-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+.csv-dropzone strong {
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+.csv-dropzone > span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.csv-dropzone-file {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+}
+
+.csv-mapping-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 10px 0 16px;
+}
+.csv-mapping-grid label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.74rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+.csv-mapping-grid input {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.csv-workflow-steps {
+  display: flex;
+  gap: 6px;
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+  counter-reset: csv-step;
+}
+.csv-workflow-steps li {
+  flex: 1;
+  position: relative;
+  padding-block: 10px;
+  padding-inline: 30px 8px;
+  font-size: 0.7rem;
+  font-weight: 750;
+  color: var(--muted);
+  background: var(--surface-soft);
+  border-radius: 8px;
+  counter-increment: csv-step;
+}
+.csv-workflow-steps li::before {
+  content: counter(csv-step);
+  position: absolute;
+  inset-inline-start: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 0.65rem;
+  display: grid;
+  place-items: center;
+}
+.csv-workflow-steps li.is-done {
+  color: var(--green);
+  background: var(--green-3);
+}
+.csv-workflow-steps li.is-current {
+  color: var(--green);
+  background: var(--surface);
+  border: 1px solid var(--green-2);
+}
+.csv-workflow-steps li.is-failed {
+  color: var(--danger);
+  background: #f7e4e2;
+}
+
+.csv-preview-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+.csv-preview-panel h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--green);
+}
+.csv-tickers-list {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.csv-two-admin-panel {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(139, 101, 24, 0.3);
+  background: #f6ecd6;
+  color: #6b4d10;
+}
+.csv-two-admin-panel strong {
+  font-size: 0.85rem;
+}
+.csv-two-admin-panel p {
+  margin: 0;
+  font-size: 0.8rem;
+}
+.csv-own-upload-note {
+  display: inline-block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  max-width: 220px;
+}
+
+.csv-history-card .table th[data-numeric],
+.csv-history-card .table td[data-numeric] {
+  text-align: end;
+}
+
+@media (max-width: 620px) {
+  .csv-import-page {
+    gap: 18px;
+  }
+  .csv-mapping-grid {
+    grid-template-columns: 1fr;
+  }
+  .csv-workflow-steps {
+    flex-direction: column;
   }
 }
