@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   debtToEquity,
   ebitMargin,
+  ebitdaGrowth,
   ebitdaMargin,
   epsGrowth,
   fcfMargin,
@@ -103,6 +104,9 @@ describe('growth rates', () => {
       netIncomeGrowth(figures({ netIncome: '90' }), figures({ netIncome: '100' })),
     ).toBeCloseTo(-0.1, 10);
     expect(epsGrowth(figures({ eps: '2.2' }), figures({ eps: '2' }))).toBeCloseTo(0.1, 10);
+    expect(
+      ebitdaGrowth(figures({ ebitda: '330' }), figures({ ebitda: '300' })),
+    ).toBeCloseTo(0.1, 10);
   });
   it('divides by the absolute prior value so a swing from a loss to a profit is directional, not undefined', () => {
     expect(
@@ -113,5 +117,6 @@ describe('growth rates', () => {
     expect(revenueGrowth(figures({ revenue: '1100' }), null)).toBeNull();
     expect(revenueGrowth(figures({ revenue: '1100' }), figures({ revenue: null }))).toBeNull();
     expect(revenueGrowth(figures({ revenue: '1100' }), figures({ revenue: '0' }))).toBeNull();
+    expect(ebitdaGrowth(figures({ ebitda: '330' }), null)).toBeNull();
   });
 });

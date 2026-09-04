@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import {
   debtToEquity,
   ebitMargin,
+  ebitdaGrowth,
   ebitdaMargin,
   epsGrowth,
   fcfMargin,
@@ -70,6 +71,7 @@ const periodSchema = z.object({
 
 const metricsSchema = z.object({
   revenueGrowth: z.number().nullable(),
+  ebitdaGrowth: z.number().nullable(),
   netIncomeGrowth: z.number().nullable(),
   epsGrowth: z.number().nullable(),
   ebitdaMargin: z.number().nullable(),
@@ -161,6 +163,7 @@ export async function readSecurityFundamentals(securityId: string): Promise<Fund
   const metrics = latestFigures
     ? {
         revenueGrowth: revenueGrowth(latestFigures, priorFigures),
+        ebitdaGrowth: ebitdaGrowth(latestFigures, priorFigures),
         netIncomeGrowth: netIncomeGrowth(latestFigures, priorFigures),
         epsGrowth: epsGrowth(latestFigures, priorFigures),
         ebitdaMargin: ebitdaMargin(latestFigures),
@@ -174,6 +177,7 @@ export async function readSecurityFundamentals(securityId: string): Promise<Fund
       }
     : {
         revenueGrowth: null,
+        ebitdaGrowth: null,
         netIncomeGrowth: null,
         epsGrowth: null,
         ebitdaMargin: null,

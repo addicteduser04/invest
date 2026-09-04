@@ -3840,6 +3840,13 @@ button {
   display: grid;
   gap: 18px;
 }
+/* A grid item's default min-width is content-based (min-content), not 0 -- without this, the
+   historical-financials table (wrapped in its own .table-scroll, meant to scroll internally on
+   narrow screens) instead forces this panel, and the single-column grid track around it, wider
+   than the viewport. */
+.security-v2-fundamentals .security-v2-panel {
+  min-width: 0;
+}
 .security-v2-info {
   display: grid;
   grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
@@ -4050,7 +4057,8 @@ button {
   .security-v2-chart-section,
   .security-v2-grid,
   .security-v2-info,
-  .security-v2-related {
+  .security-v2-related,
+  .security-v2-fundamentals {
     padding-inline: 18px;
   }
   .security-v2-hero {

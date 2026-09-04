@@ -84,6 +84,13 @@ export function revenueGrowth(
   return growthRate(current.revenue, prior?.revenue ?? null);
 }
 
+export function ebitdaGrowth(
+  current: Pick<FundamentalsFigures, 'ebitda'>,
+  prior: Pick<FundamentalsFigures, 'ebitda'> | null,
+) {
+  return growthRate(current.ebitda, prior?.ebitda ?? null);
+}
+
 export function netIncomeGrowth(
   current: Pick<FundamentalsFigures, 'netIncome'>,
   prior: Pick<FundamentalsFigures, 'netIncome'> | null,

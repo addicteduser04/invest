@@ -95,7 +95,7 @@ Pure functions in `apps/web/lib/fundamentals-metrics.ts`. Every metric returns `
 throws, never guesses) when a required input is missing or a denominator is exactly zero:
 
 - **Growth (YoY, matched against the prior period of the same `period_type`/`interim_period`)**:
-  revenue growth, net income growth, EPS growth — `(current - prior) / abs(prior)`.
+  revenue growth, EBITDA growth, net income growth, EPS growth — `(current - prior) / abs(prior)`.
 - **Margins**: EBITDA / EBIT / net / FCF margin — `<line item> / revenue`.
 - **Free cash flow**: `operating_cash_flow - capex`.
 - **Debt/equity**: `total_debt / total_equity`. **Net debt**: `total_debt - cash_and_equivalents`.

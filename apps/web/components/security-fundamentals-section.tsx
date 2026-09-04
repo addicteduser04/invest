@@ -151,6 +151,11 @@ export function SecurityFundamentalsSection({
       toneClass: tone(metrics.revenueGrowth),
     },
     {
+      label: t.fundamentalsEbitdaGrowth,
+      value: percentRatio(metrics.ebitdaGrowth, locale),
+      toneClass: tone(metrics.ebitdaGrowth),
+    },
+    {
       label: t.fundamentalsNetIncomeGrowth,
       value: percentRatio(metrics.netIncomeGrowth, locale),
       toneClass: tone(metrics.netIncomeGrowth),
