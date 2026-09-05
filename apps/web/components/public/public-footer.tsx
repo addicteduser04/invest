@@ -19,18 +19,32 @@ export function PublicFooter({
       label: authenticated ? t.account : t.signIn,
     },
   ];
+  const year = new Date().getFullYear();
   return (
     <footer className="public-footer">
-      <span>{t.brand}</span>
-      <nav className="public-footer-nav" aria-label={t.footerNavigation}>
-        {links.map((link) => (
-          <a key={link.href} href={link.href}>
-            {link.label}
-          </a>
-        ))}
-      </nav>
-      <span>{t.notBroker}</span>
-      <span>{t.informationDisclaimer}</span>
+      <div className="public-footer-top">
+        <div className="public-footer-brand">
+          <span className="public-footer-mark">{t.brand}</span>
+          <p className="public-footer-tagline">{t.tagline}</p>
+        </div>
+        <nav className="public-footer-nav" aria-label={t.footerNavigation}>
+          <span className="public-footer-nav-heading">{t.footerNavigate}</span>
+          <div className="public-footer-nav-links">
+            {links.map((link) => (
+              <a key={link.href} href={link.href}>
+                {link.label}
+              </a>
+            ))}
+          </div>
+        </nav>
+      </div>
+      <div className="public-footer-legal">
+        <p>{t.notBroker}</p>
+        <p>{t.informationDisclaimer}</p>
+        <p className="public-footer-copyright">
+          © {year} {t.brand}
+        </p>
+      </div>
     </footer>
   );
 }

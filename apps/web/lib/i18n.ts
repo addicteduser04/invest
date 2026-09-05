@@ -583,6 +583,7 @@ export const ui = {
     importTransactionsNotice:
       'Previewing does not create transactions. Confirmation is atomic after validation.',
     footerNavigation: 'Footer navigation',
+    footerNavigate: 'Navigate',
   },
   fr: {
     brand: 'SaifInvest',
@@ -1176,6 +1177,7 @@ export const ui = {
     importTransactionsNotice:
       'La prévisualisation ne crée aucune opération. La confirmation est entièrement atomique après validation.',
     footerNavigation: 'Navigation de pied de page',
+    footerNavigate: 'Naviguer',
   },
   ar: {
     brand: 'SaifInvest',
@@ -1737,6 +1739,7 @@ export const ui = {
     importTransactionsNotice:
       'المعاينة لا تنشئ أي عملية. يتم التأكيد دفعة واحدة فقط بعد نجاح التحقق.',
     footerNavigation: 'تصفح تذييل الصفحة',
+    footerNavigate: 'التصفح',
   },
 } as const;
 
