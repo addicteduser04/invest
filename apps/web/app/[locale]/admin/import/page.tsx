@@ -34,6 +34,7 @@ export default async function ImportPage({ params }: { params: Promise<{ locale:
         <a href={`/${locale}/admin/securities`}>{t.adminSecurityMasterLink}</a>
         <a href={`/${locale}/admin/market-data`}>{t.adminMarketDataLink}</a>
         <a href={`/${locale}/admin/fundamentals`}>{t.adminFundamentalsLink}</a>
+        <a href={`/${locale}/admin/reports`}>{t.adminReportsLink}</a>
       </div>
       <p className="admin-v2-notice admin-v2-notice-strong">{t.adminPriceImportsNotice}</p>
       <div className="admin-v2-body">

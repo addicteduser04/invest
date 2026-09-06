@@ -3,9 +3,9 @@ import { createClient } from '@/lib/supabase/server';
 import { asLocale, direction, getUi } from '@/lib/i18n';
 import { PublicNav } from '@/components/public/public-nav';
 import { PublicFooter } from '@/components/public/public-footer';
-import { AdminSecurityImport, type AdminSecurityRow } from '@/components/admin-security-import';
+import { AdminReports, type AdminReportsProps } from '@/components/admin-reports';
 
-export default async function SecurityAdminPage({
+export default async function ReportsAdminPage({
   params,
 }: {
   params: Promise<{ locale: string }>;
@@ -25,22 +25,39 @@ export default async function SecurityAdminPage({
     .eq('role', 'data_admin')
     .maybeSingle();
   if (!role) redirect(`/${locale}/dashboard`);
-  const { data: rows } = await supabase.rpc('list_market_security_master_admin');
+
+  const [statsResult, runsResult, unmatchedResult, aliasesResult, securitiesResult] =
+    await Promise.all([
+      supabase.rpc('company_documents_coverage_stats'),
+      supabase.rpc('list_document_sync_runs'),
+      supabase.rpc('list_unmatched_document_issuers'),
+      supabase.rpc('list_company_document_aliases'),
+      supabase.from('market_security_overview').select('id,ticker,name').order('ticker'),
+    ]);
+
   return (
     <main className="public-page admin-v2-page" dir={direction(locale)}>
       <PublicNav locale={locale} authenticated />
       <div className="admin-v2-hero">
         <div>
           <p className="public-eyebrow">{t.adminEyebrow}</p>
-          <h1>{t.adminSecurityMasterTitle}</h1>
+          <h1>{t.adminReportsTitle}</h1>
+          <p className="admin-v2-subtitle">{t.adminReportsSubtitle}</p>
         </div>
-        <a href={`/${locale}/admin/import`}>{t.adminPriceImportsLink}</a>
+        <a href={`/${locale}/admin/securities`}>{t.adminSecurityMasterLink}</a>
         <a href={`/${locale}/admin/market-data`}>{t.adminMarketDataLink}</a>
         <a href={`/${locale}/admin/fundamentals`}>{t.adminFundamentalsLink}</a>
-        <a href={`/${locale}/admin/reports`}>{t.adminReportsLink}</a>
+        <a href={`/${locale}/admin/import`}>{t.adminPriceImportsLink}</a>
       </div>
       <div className="admin-v2-body">
-        <AdminSecurityImport locale={locale} rows={(rows ?? []) as AdminSecurityRow[]} />
+        <AdminReports
+          locale={locale}
+          stats={statsResult.data as AdminReportsProps['stats']}
+          runs={(runsResult.data ?? []) as AdminReportsProps['runs']}
+          unmatched={(unmatchedResult.data ?? []) as AdminReportsProps['unmatched']}
+          aliases={(aliasesResult.data ?? []) as AdminReportsProps['aliases']}
+          securities={(securitiesResult.data ?? []) as AdminReportsProps['securities']}
+        />
       </div>
       <PublicFooter locale={locale} authenticated />
     </main>

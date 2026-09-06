@@ -10,11 +10,13 @@ import { SecurityFundamentalsSection } from '@/components/security-fundamentals-
 import { SecurityValuationSection } from '@/components/security-valuation-section';
 import { SecurityPeerSection } from '@/components/security-peer-section';
 import { SecurityDcfSection, type SavedDcfScenario } from '@/components/security-dcf-section';
+import { SecurityAnnualReportsSection } from '@/components/security-annual-reports-section';
 import { readSecurityFundamentals } from '@/lib/fundamentals-read';
 import { readValuationSnapshots } from '@/lib/valuation-read';
 import { readPeerComparison } from '@/lib/peer-read';
 import { readDcfHistoricalInputs } from '@/lib/dcf-inputs';
 import { deriveDcfDefaults } from '@/lib/dcf-defaults';
+import { readSecurityAnnualReports } from '@/lib/reports-read';
 
 type PeriodKey = '1M' | '3M' | 'YTD' | '1Y' | '3Y';
 
@@ -141,7 +143,7 @@ export default async function SecurityPage({
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [securityResult, historyResult, indicesResult, masiHistoryResult, fundamentals] =
+  const [securityResult, historyResult, indicesResult, masiHistoryResult, fundamentals, annualReports] =
     await Promise.all([
       supabase
         .from('market_security_overview')
@@ -168,6 +170,7 @@ export default async function SecurityPage({
         .order('market_date', { ascending: true })
         .limit(900),
       readSecurityFundamentals(securityId),
+      readSecurityAnnualReports(securityId),
     ]);
 
   const security = securityResult.data as SecurityRow | null;
@@ -412,6 +415,8 @@ export default async function SecurityPage({
           </div>
         </dl>
       </section>
+
+      <SecurityAnnualReportsSection locale={locale} reports={annualReports} />
 
       {related.length ? (
         <section className="security-v2-related">

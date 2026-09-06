@@ -6,3 +6,6 @@ coverage
 .pnpm-store
 pnpm-lock.yaml
 MVP_BVC_Engineering_Pack
+# Verbatim external HTML snapshots used as parser test fixtures -- deliberately unformatted,
+# real-world (occasionally invalid) markup, not application code.
+packages/market-data/src/__fixtures__

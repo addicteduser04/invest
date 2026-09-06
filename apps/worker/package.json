@@ -9,9 +9,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "dev": "tsx watch src/index.ts",
-    "market:daily": "tsx src/daily-ingestion-cli.ts"
+    "market:daily": "tsx src/daily-ingestion-cli.ts",
+    "reports:sync": "tsx src/reports-sync-cli.ts"
   },
   "dependencies": {
+    "@bvc/annual-reports": "workspace:*",
     "@bvc/market-data": "workspace:*",
     "@bvc/market-ingestion": "workspace:*",
     "@bvc/portfolio-engine": "workspace:*",

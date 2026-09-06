@@ -1,6 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import {
   buildRetryPlan,
   DEFAULT_CONCURRENCY,
@@ -11,33 +9,7 @@ import {
   todayInCasablanca,
   type RunSummary,
 } from '@bvc/market-ingestion';
-
-type Env = Record<string, string | undefined>;
-
-// Resolve relative to this file (apps/worker/src/) rather than process.cwd(), since
-// `pnpm --filter @bvc/worker market:daily` runs with cwd set to apps/worker, which has no
-// .env.local of its own — the repo root's does.
-const REPO_ROOT_ENV_LOCAL = resolve(dirname(fileURLToPath(import.meta.url)), '../../../.env.local');
-
-export function loadDotEnvLocal(path = REPO_ROOT_ENV_LOCAL): Env {
-  const env: Env = {};
-  let text = '';
-  try {
-    text = readFileSync(path, 'utf8');
-  } catch {
-    return env;
-  }
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(trimmed);
-    if (!match) continue;
-    const [, key, raw = ''] = match;
-    if (!key) continue;
-    env[key] = raw.replace(/^['"]|['"]$/g, '');
-  }
-  return env;
-}
+import { loadDotEnvLocal, type Env } from './env';
 
 function printSummary(summary: RunSummary, log: (message: string) => void = console.log) {
   log('');

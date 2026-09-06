@@ -50,6 +50,7 @@ export default async function MarketDataAdminPage({
         <a href={`/${locale}/admin/securities`}>{t.adminSecurityMasterLink}</a>
         <a href={`/${locale}/admin/import`}>{t.adminPriceImportsLink}</a>
         <a href={`/${locale}/admin/fundamentals`}>{t.adminFundamentalsLink}</a>
+        <a href={`/${locale}/admin/reports`}>{t.adminReportsLink}</a>
       </div>
       <p className="admin-v2-notice">{t.adminMarketDataNotice}</p>
       <div className="admin-v2-body">

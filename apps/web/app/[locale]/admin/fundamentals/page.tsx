@@ -40,6 +40,7 @@ export default async function FundamentalsAdminPage({
         <a href={`/${locale}/admin/securities`}>{t.adminSecurityMasterLink}</a>
         <a href={`/${locale}/admin/import`}>{t.adminPriceImportsLink}</a>
         <a href={`/${locale}/admin/market-data`}>{t.adminMarketDataLink}</a>
+        <a href={`/${locale}/admin/reports`}>{t.adminReportsLink}</a>
       </div>
       <div className="admin-v2-body">
         <AdminFundamentalsImport locale={locale} runs={(runs ?? []) as AdminFundamentalsRun[]} />
