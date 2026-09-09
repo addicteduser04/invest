@@ -106,9 +106,10 @@ describe('growth rates', () => {
       netIncomeGrowth(figures({ netIncome: '90' }), figures({ netIncome: '100' })),
     ).toBeCloseTo(-0.1, 10);
     expect(epsGrowth(figures({ eps: '2.2' }), figures({ eps: '2' }))).toBeCloseTo(0.1, 10);
-    expect(
-      ebitdaGrowth(figures({ ebitda: '330' }), figures({ ebitda: '300' })),
-    ).toBeCloseTo(0.1, 10);
+    expect(ebitdaGrowth(figures({ ebitda: '330' }), figures({ ebitda: '300' }))).toBeCloseTo(
+      0.1,
+      10,
+    );
   });
   it('divides by the absolute prior value so a swing from a loss to a profit is directional, not undefined', () => {
     expect(
@@ -134,7 +135,9 @@ describe('changeInWorkingCapital', () => {
     expect(
       changeInWorkingCapital({ workingCapital: '-1800' }, { workingCapital: null }),
     ).toBeNull();
-    expect(changeInWorkingCapital({ workingCapital: null }, { workingCapital: '-2200' })).toBeNull();
+    expect(
+      changeInWorkingCapital({ workingCapital: null }, { workingCapital: '-2200' }),
+    ).toBeNull();
   });
 });
 

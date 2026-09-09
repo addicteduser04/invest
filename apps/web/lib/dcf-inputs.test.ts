@@ -36,8 +36,24 @@ const TODAY = '2026-09-04';
 describe('buildDcfHistoricalInputs', () => {
   it('sorts periods ascending and computes revenue growth / EBIT margin / effective tax rate for each', () => {
     const rows = [
-      row({ id: 'y1', period_end_date: '2023-12-31', publication_date: '2024-02-01', revenue: '1000', ebit: '200', net_income: '120', tax_expense: '40' }),
-      row({ id: 'y2', period_end_date: '2024-12-31', publication_date: '2025-02-01', revenue: '1100', ebit: '230', net_income: '135', tax_expense: '45' }),
+      row({
+        id: 'y1',
+        period_end_date: '2023-12-31',
+        publication_date: '2024-02-01',
+        revenue: '1000',
+        ebit: '200',
+        net_income: '120',
+        tax_expense: '40',
+      }),
+      row({
+        id: 'y2',
+        period_end_date: '2024-12-31',
+        publication_date: '2025-02-01',
+        revenue: '1100',
+        ebit: '230',
+        net_income: '135',
+        tax_expense: '45',
+      }),
     ];
     const inputs = buildDcfHistoricalInputs('sec-1', rows, TODAY);
     expect(inputs.periods.map((p) => p.periodEndDate)).toEqual(['2023-12-31', '2024-12-31']);
@@ -49,8 +65,18 @@ describe('buildDcfHistoricalInputs', () => {
 
   it('prefers a directly reported change_in_working_capital over deriving one', () => {
     const rows = [
-      row({ id: 'y1', period_end_date: '2023-12-31', working_capital: '-200', change_in_working_capital: null }),
-      row({ id: 'y2', period_end_date: '2024-12-31', working_capital: '-150', change_in_working_capital: '999' }),
+      row({
+        id: 'y1',
+        period_end_date: '2023-12-31',
+        working_capital: '-200',
+        change_in_working_capital: null,
+      }),
+      row({
+        id: 'y2',
+        period_end_date: '2024-12-31',
+        working_capital: '-150',
+        change_in_working_capital: '999',
+      }),
     ];
     const inputs = buildDcfHistoricalInputs('sec-1', rows, TODAY);
     expect(inputs.periods[1]!.changeInWorkingCapital).toBe(999);
@@ -59,8 +85,18 @@ describe('buildDcfHistoricalInputs', () => {
 
   it('derives change in working capital from consecutive same-period-type working_capital when not directly reported', () => {
     const rows = [
-      row({ id: 'y1', period_end_date: '2023-12-31', working_capital: '-200', change_in_working_capital: null }),
-      row({ id: 'y2', period_end_date: '2024-12-31', working_capital: '-150', change_in_working_capital: null }),
+      row({
+        id: 'y1',
+        period_end_date: '2023-12-31',
+        working_capital: '-200',
+        change_in_working_capital: null,
+      }),
+      row({
+        id: 'y2',
+        period_end_date: '2024-12-31',
+        working_capital: '-150',
+        change_in_working_capital: null,
+      }),
     ];
     const inputs = buildDcfHistoricalInputs('sec-1', rows, TODAY);
     expect(inputs.periods[1]!.changeInWorkingCapital).toBeCloseTo(50, 10);
@@ -69,8 +105,22 @@ describe('buildDcfHistoricalInputs', () => {
 
   it('does not derive change in working capital across an interim/annual mismatch', () => {
     const rows = [
-      row({ id: 'h1', period_type: 'interim', interim_period: 'H1', period_end_date: '2024-06-30', working_capital: '-180', change_in_working_capital: null }),
-      row({ id: 'y2', period_type: 'annual', interim_period: null, period_end_date: '2024-12-31', working_capital: '-150', change_in_working_capital: null }),
+      row({
+        id: 'h1',
+        period_type: 'interim',
+        interim_period: 'H1',
+        period_end_date: '2024-06-30',
+        working_capital: '-180',
+        change_in_working_capital: null,
+      }),
+      row({
+        id: 'y2',
+        period_type: 'annual',
+        interim_period: null,
+        period_end_date: '2024-12-31',
+        working_capital: '-150',
+        change_in_working_capital: null,
+      }),
     ];
     const inputs = buildDcfHistoricalInputs('sec-1', rows, TODAY);
     const annual = inputs.periods.find((p) => p.periodType === 'annual')!;
@@ -85,8 +135,20 @@ describe('buildDcfHistoricalInputs', () => {
 
   it('picks the PIT-usable base period, excluding an unpublished future/interim row', () => {
     const rows = [
-      row({ id: 'fy2025', period_end_date: '2025-12-31', publication_date: '2026-02-18', fiscal_year: 2025 }),
-      row({ id: 'h1-2026', period_type: 'interim', interim_period: 'H1', period_end_date: '2026-06-30', publication_date: null, fiscal_year: 2026 }),
+      row({
+        id: 'fy2025',
+        period_end_date: '2025-12-31',
+        publication_date: '2026-02-18',
+        fiscal_year: 2025,
+      }),
+      row({
+        id: 'h1-2026',
+        period_type: 'interim',
+        interim_period: 'H1',
+        period_end_date: '2026-06-30',
+        publication_date: null,
+        fiscal_year: 2026,
+      }),
     ];
     const inputs = buildDcfHistoricalInputs('sec-1', rows, TODAY);
     expect(inputs.basePeriod?.periodEndDate).toBe('2025-12-31');

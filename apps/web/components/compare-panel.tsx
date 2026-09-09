@@ -193,7 +193,9 @@ export function ComparePanel({
               </tr>
               <MetricRow
                 label={t.screenerMarketCap}
-                cells={securities.map((security) => compactMoney(security.valuation.marketCap, locale))}
+                cells={securities.map((security) =>
+                  compactMoney(security.valuation.marketCap, locale),
+                )}
               />
               <MetricRow
                 label={t.screenerPe}
@@ -209,12 +211,16 @@ export function ComparePanel({
               />
               <MetricRow
                 label={t.screenerRevenueGrowth}
-                cells={securities.map((security) => percentRatio(security.valuation.revenueGrowth, locale))}
+                cells={securities.map((security) =>
+                  percentRatio(security.valuation.revenueGrowth, locale),
+                )}
                 tones={securities.map((security) => toneClass(security.valuation.revenueGrowth))}
               />
               <MetricRow
                 label={t.screenerNetMargin}
-                cells={securities.map((security) => percentRatio(security.valuation.netMargin, locale))}
+                cells={securities.map((security) =>
+                  percentRatio(security.valuation.netMargin, locale),
+                )}
                 tones={securities.map((security) => toneClass(security.valuation.netMargin))}
               />
               <MetricRow

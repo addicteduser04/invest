@@ -106,7 +106,8 @@ export function SecurityValuationSection({
         {valuation.fundamentalsPeriod ? (
           <>
             {' · '}
-            {t.fundamentalsPublished}: <span dir="ltr">{valuation.fundamentalsPeriod.publicationDate}</span>
+            {t.fundamentalsPublished}:{' '}
+            <span dir="ltr">{valuation.fundamentalsPeriod.publicationDate}</span>
           </>
         ) : null}
       </p>

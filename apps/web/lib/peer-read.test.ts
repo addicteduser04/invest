@@ -7,7 +7,9 @@ import {
 } from './peer-read';
 import type { ValuationSnapshot } from './valuation-read';
 
-function securityRow(overrides: Partial<SecurityOverviewRow> & { id: string }): SecurityOverviewRow {
+function securityRow(
+  overrides: Partial<SecurityOverviewRow> & { id: string },
+): SecurityOverviewRow {
   return {
     ticker: overrides.id.toUpperCase(),
     name: `${overrides.id} co`,
@@ -53,13 +55,18 @@ describe('selectPeerCandidates', () => {
       securityRow({ id: 'suspended', listing_status: 'suspended' }),
       securityRow({ id: 'active', listing_status: 'active' }),
     ];
-    const peers = selectPeerCandidates(rows, target).map((p) => p.id).sort();
+    const peers = selectPeerCandidates(rows, target)
+      .map((p) => p.id)
+      .sort();
     expect(peers).toEqual(['active', 'suspended']);
   });
 
   it('returns no peers when the target has no sector', () => {
     const noSectorTarget = securityRow({ id: 'target', sector: null });
-    const peers = selectPeerCandidates([noSectorTarget, securityRow({ id: 'peer' })], noSectorTarget);
+    const peers = selectPeerCandidates(
+      [noSectorTarget, securityRow({ id: 'peer' })],
+      noSectorTarget,
+    );
     expect(peers).toEqual([]);
   });
 });

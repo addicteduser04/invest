@@ -49,6 +49,8 @@ export function deriveDcfDefaults(periods: DcfHistoricalPeriod[]): DcfDefaults {
     taxRate: medianOf(recent.map((p) => p.effectiveTaxRate)),
     daPercentRevenue: medianOf(recent.map((p) => ratioToRevenue(p, p.depreciationAmortization))),
     capexPercentRevenue: medianOf(recent.map((p) => ratioToRevenue(p, p.capex))),
-    changeNwcPercentRevenue: medianOf(recent.map((p) => ratioToRevenue(p, p.changeInWorkingCapital))),
+    changeNwcPercentRevenue: medianOf(
+      recent.map((p) => ratioToRevenue(p, p.changeInWorkingCapital)),
+    ),
   };
 }

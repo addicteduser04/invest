@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { projectDcf, runDcf, terminalValue, type DcfAssumptions, type DcfBaseInputs } from './dcf-model';
+import {
+  projectDcf,
+  runDcf,
+  terminalValue,
+  type DcfAssumptions,
+  type DcfBaseInputs,
+} from './dcf-model';
 import type { DcfAssumptionsInput, DcfBaseInputsInput } from './dcf-validation';
 
 // Hand-calculable fixture (also verified independently in a spreadsheet/calculator): revenue
@@ -13,7 +19,12 @@ import type { DcfAssumptionsInput, DcfBaseInputsInput } from './dcf-validation';
 //   5  | 1610.51  | 322.10 | 80.53 | 241.58 | 80.53 | 96.63 | 16.11 | 209.366 | 130.000
 // PV(forecast) = 650.000; TV = 209.3663*1.02/0.08 = 2669.420325; PV(TV) = 1657.500
 // EV = 2307.500; net debt = 200-100 = 100; equity = 2207.500; per share = 22.075
-const baseInputs: DcfBaseInputs = { baseRevenue: 1000, cash: 100, totalDebt: 200, sharesOutstanding: 100 };
+const baseInputs: DcfBaseInputs = {
+  baseRevenue: 1000,
+  cash: 100,
+  totalDebt: 200,
+  sharesOutstanding: 100,
+};
 const assumptions5y: DcfAssumptions = {
   forecastYears: 5,
   revenueGrowth: 0.1,
@@ -129,7 +140,12 @@ describe('projectDcf -- edge cases', () => {
   });
 });
 
-const validInput: DcfBaseInputsInput = { baseRevenue: 1000, cash: 100, totalDebt: 200, sharesOutstanding: 100 };
+const validInput: DcfBaseInputsInput = {
+  baseRevenue: 1000,
+  cash: 100,
+  totalDebt: 200,
+  sharesOutstanding: 100,
+};
 const validAssumptionsInput: DcfAssumptionsInput = {
   forecastYears: 5,
   revenueGrowth: 0.1,

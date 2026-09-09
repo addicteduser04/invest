@@ -6,8 +6,16 @@ import { getUi } from '@/lib/i18n';
 import type { DcfHistoricalInputs } from '@/lib/dcf-inputs';
 import type { DcfDefaultReference, DcfDefaults } from '@/lib/dcf-defaults';
 import { runDcf, type DcfResult } from '@/lib/dcf-model';
-import { buildDefaultSensitivityAxes, buildSensitivityMatrix, type SensitivityMatrix } from '@/lib/dcf-sensitivity';
-import type { DcfAssumptionsInput, DcfBaseInputsInput, DcfValidationCode } from '@/lib/dcf-validation';
+import {
+  buildDefaultSensitivityAxes,
+  buildSensitivityMatrix,
+  type SensitivityMatrix,
+} from '@/lib/dcf-sensitivity';
+import type {
+  DcfAssumptionsInput,
+  DcfBaseInputsInput,
+  DcfValidationCode,
+} from '@/lib/dcf-validation';
 
 type ScenarioKey = 'bear' | 'base' | 'bull';
 type DcfScenarioState = DcfBaseInputsInput & DcfAssumptionsInput;
@@ -51,7 +59,8 @@ const ISSUE_LABEL_KEY: Record<DcfValidationCode, UiKey> = {
   MISSING_OPERATING_ASSUMPTION: 'dcfIssueMissingOperatingAssumption',
 };
 
-const intlLocale = (locale: Locale) => (locale === 'ar' ? 'ar-MA' : locale === 'fr' ? 'fr-MA' : 'en-MA');
+const intlLocale = (locale: Locale) =>
+  locale === 'ar' ? 'ar-MA' : locale === 'fr' ? 'fr-MA' : 'en-MA';
 
 const moneyPerShare = (value: number | null, locale: Locale) => {
   if (value === null || !Number.isFinite(value)) return '—';
@@ -82,9 +91,10 @@ const percentFraction = (value: number | null, locale: Locale, signed = false) =
 
 const compactCount = (value: number | null, locale: Locale) => {
   if (value === null || !Number.isFinite(value)) return '—';
-  return new Intl.NumberFormat(intlLocale(locale), { notation: 'compact', maximumFractionDigits: 1 }).format(
-    value,
-  );
+  return new Intl.NumberFormat(intlLocale(locale), {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value);
 };
 
 function toPercentDisplay(fraction: number | null): string {
@@ -154,7 +164,10 @@ function NumberField({
   );
 }
 
-function buildInitialScenarioState(historicalInputs: DcfHistoricalInputs, defaults: DcfDefaults): DcfScenarioState {
+function buildInitialScenarioState(
+  historicalInputs: DcfHistoricalInputs,
+  defaults: DcfDefaults,
+): DcfScenarioState {
   const base = historicalInputs.basePeriod;
   return {
     baseRevenue: base?.revenue ?? null,
@@ -179,7 +192,9 @@ interface AssumptionRow {
   historical: DcfDefaultReference;
 }
 
-function isScenarioSet(value: unknown): value is { activeScenario: ScenarioKey; scenarios: ScenarioSet } {
+function isScenarioSet(
+  value: unknown,
+): value is { activeScenario: ScenarioKey; scenarios: ScenarioSet } {
   if (!value || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
   if (!v['scenarios'] || typeof v['scenarios'] !== 'object') return false;
@@ -210,13 +225,17 @@ export function SecurityDcfSection({
   const current = scenarios[activeScenario];
 
   const updateField = <K extends keyof DcfScenarioState>(key: K, value: DcfScenarioState[K]) => {
-    setScenarios((prev) => ({ ...prev, [activeScenario]: { ...prev[activeScenario], [key]: value } }));
+    setScenarios((prev) => ({
+      ...prev,
+      [activeScenario]: { ...prev[activeScenario], [key]: value },
+    }));
   };
 
   const run = useMemo(() => runDcf(current, current), [current]);
 
   const sensitivity: SensitivityMatrix | null = useMemo(() => {
-    if (!run.valid || !run.result || current.wacc === null || current.terminalGrowth === null) return null;
+    if (!run.valid || !run.result || current.wacc === null || current.terminalGrowth === null)
+      return null;
     const axes = buildDefaultSensitivityAxes(current.wacc, current.terminalGrowth);
     const strictBase = {
       baseRevenue: current.baseRevenue as number,
@@ -229,20 +248,32 @@ export function SecurityDcfSection({
 
   const price = currentPrice.price === null ? null : Number(currentPrice.price);
   const difference =
-    run.result?.valuePerShare !== null && run.result?.valuePerShare !== undefined && price !== null && price > 0
+    run.result?.valuePerShare !== null &&
+    run.result?.valuePerShare !== undefined &&
+    price !== null &&
+    price > 0
       ? run.result.valuePerShare / price - 1
       : null;
 
   const basePeriod = historicalInputs.basePeriod;
   const baseYearLabel = basePeriod ? `FY${basePeriod.fiscalYear}A` : t.dcfColumnBaseYear;
-  const yearLabel = (year: number) => (basePeriod ? `FY${basePeriod.fiscalYear + year}E` : `${year}E`);
+  const yearLabel = (year: number) =>
+    basePeriod ? `FY${basePeriod.fiscalYear + year}E` : `${year}E`;
 
   const assumptionRows: AssumptionRow[] = [
     { key: 'revenueGrowth', labelKey: 'dcfRevenueGrowthLabel', historical: defaults.revenueGrowth },
     { key: 'ebitMargin', labelKey: 'fundamentalsEbitMargin', historical: defaults.ebitMargin },
     { key: 'taxRate', labelKey: 'dcfTaxRateLabel', historical: defaults.taxRate },
-    { key: 'daPercentRevenue', labelKey: 'dcfDaPercentLabel', historical: defaults.daPercentRevenue },
-    { key: 'capexPercentRevenue', labelKey: 'dcfCapexPercentLabel', historical: defaults.capexPercentRevenue },
+    {
+      key: 'daPercentRevenue',
+      labelKey: 'dcfDaPercentLabel',
+      historical: defaults.daPercentRevenue,
+    },
+    {
+      key: 'capexPercentRevenue',
+      labelKey: 'dcfCapexPercentLabel',
+      historical: defaults.capexPercentRevenue,
+    },
     {
       key: 'changeNwcPercentRevenue',
       labelKey: 'dcfNwcPercentLabel',
@@ -345,7 +376,11 @@ export function SecurityDcfSection({
           </label>
           <label>
             <span>{t.fundamentalsCash}</span>
-            <NumberField value={current.cash} onChange={(v) => updateField('cash', v)} ariaLabel={t.fundamentalsCash} />
+            <NumberField
+              value={current.cash}
+              onChange={(v) => updateField('cash', v)}
+              ariaLabel={t.fundamentalsCash}
+            />
           </label>
           <label>
             <span>{t.fundamentalsTotalDebt}</span>
@@ -386,7 +421,9 @@ export function SecurityDcfSection({
               <span className="dcf-assumption-historical">
                 {t.dcfHistoricalReference}:{' '}
                 <b className="technical" dir="ltr">
-                  {row.historical.value === null ? t.dcfNoHistoricalReference : percentFraction(row.historical.value, locale)}
+                  {row.historical.value === null
+                    ? t.dcfNoHistoricalReference
+                    : percentFraction(row.historical.value, locale)}
                 </b>
               </span>
               <span className="dcf-assumption-forecast">
@@ -406,7 +443,11 @@ export function SecurityDcfSection({
             <span className="dcf-assumption-historical">{t.dcfWaccHint}</span>
             <span className="dcf-assumption-forecast">
               <span>{t.dcfForecastAssumption}</span>
-              <PercentField value={current.wacc} onChange={(v) => updateField('wacc', v)} ariaLabel={t.dcfWaccLabel} />
+              <PercentField
+                value={current.wacc}
+                onChange={(v) => updateField('wacc', v)}
+                ariaLabel={t.dcfWaccLabel}
+              />
             </span>
           </div>
           <div className="dcf-assumption-row">
@@ -453,7 +494,12 @@ export function SecurityDcfSection({
               onChange={(event) => setScenarioName(event.target.value)}
               maxLength={100}
             />
-            <button type="button" className="button compact" disabled={!scenarioName.trim()} onClick={() => void saveScenario()}>
+            <button
+              type="button"
+              className="button compact"
+              disabled={!scenarioName.trim()}
+              onClick={() => void saveScenario()}
+            >
               {t.dcfSaveScenario}
             </button>
           </div>
@@ -474,7 +520,12 @@ export function SecurityDcfSection({
                   </option>
                 ))}
               </select>
-              <button type="button" className="button compact" disabled={!selectedSavedId} onClick={loadScenario}>
+              <button
+                type="button"
+                className="button compact"
+                disabled={!selectedSavedId}
+                onClick={loadScenario}
+              >
                 {t.dcfLoadScenario}
               </button>
             </div>
@@ -521,23 +572,32 @@ function DcfHeadline({
       <article>
         <span>{t.dcfCurrentPriceLabel}</span>
         <strong className="technical" dir="ltr">
-          {currentPrice.price === null ? t.dcfPriceUnavailable : moneyPerShare(Number(currentPrice.price), locale)}
+          {currentPrice.price === null
+            ? t.dcfPriceUnavailable
+            : moneyPerShare(Number(currentPrice.price), locale)}
         </strong>
         {currentPrice.stale ? <small>{t.dcfPriceStaleNote}</small> : null}
       </article>
       <article>
         <span>{t.dcfDifferenceLabel}</span>
-        <strong className={`technical ${difference !== null && difference >= 0 ? 'positive' : difference !== null ? 'negative' : ''}`} dir="ltr">
+        <strong
+          className={`technical ${difference !== null && difference >= 0 ? 'positive' : difference !== null ? 'negative' : ''}`}
+          dir="ltr"
+        >
           {percentFraction(difference, locale, true)}
         </strong>
       </article>
       <article>
         <span>{t.dcfWaccLabel}</span>
-        <strong className="technical" dir="ltr">{percentFraction(wacc, locale)}</strong>
+        <strong className="technical" dir="ltr">
+          {percentFraction(wacc, locale)}
+        </strong>
       </article>
       <article>
         <span>{t.dcfTerminalGrowthLabel}</span>
-        <strong className="technical" dir="ltr">{percentFraction(terminalGrowth, locale)}</strong>
+        <strong className="technical" dir="ltr">
+          {percentFraction(terminalGrowth, locale)}
+        </strong>
       </article>
       <article>
         <span>{t.dcfForecastHorizonLabel}</span>
@@ -581,18 +641,90 @@ function DcfForecastTable({
             </tr>
           </thead>
           <tbody>
-            <ForecastRow label={t.fundamentalsRevenue} baseValue={basePeriod?.revenue ?? null} years={result.years} pick={(y) => y.revenue} format={(v) => compactMoney(v, locale)} />
-            <ForecastRow label={t.dcfRowGrowth} baseValue={basePeriod?.revenueGrowth ?? null} years={result.years} pick={(y) => y.revenueGrowth} format={(v) => percentFraction(v, locale)} />
-            <ForecastRow label={t.fundamentalsEbit} baseValue={basePeriod?.ebit ?? null} years={result.years} pick={(y) => y.ebit} format={(v) => compactMoney(v, locale)} />
-            <ForecastRow label={t.fundamentalsEbitMargin} baseValue={basePeriod?.ebitMargin ?? null} years={result.years} pick={(y) => y.ebitMargin} format={(v) => percentFraction(v, locale)} />
-            <ForecastRow label={t.dcfRowTax} baseValue={null} years={result.years} pick={(y) => y.tax} format={(v) => compactMoney(v, locale)} />
-            <ForecastRow label={t.dcfRowNopat} baseValue={null} years={result.years} pick={(y) => y.nopat} format={(v) => compactMoney(v, locale)} />
-            <ForecastRow label="D&A" baseValue={basePeriod?.depreciationAmortization ?? null} years={result.years} pick={(y) => y.da} format={(v) => compactMoney(v, locale)} />
-            <ForecastRow label={t.dcfRowCapex} baseValue={basePeriod?.capex ?? null} years={result.years} pick={(y) => y.capex} format={(v) => compactMoney(v, locale)} />
-            <ForecastRow label={t.dcfRowChangeNwc} baseValue={basePeriod?.changeInWorkingCapital ?? null} years={result.years} pick={(y) => y.changeInNwc} format={(v) => compactMoney(v, locale)} />
-            <ForecastRow label={t.dcfRowFcff} baseValue={null} years={result.years} pick={(y) => y.fcff} format={(v) => compactMoney(v, locale)} />
-            <ForecastRow label={t.dcfRowDiscountFactor} baseValue={null} years={result.years} pick={(y) => y.discountFactor} format={(v) => (v === null ? '—' : v.toFixed(3))} />
-            <ForecastRow label={t.dcfRowPvFcff} baseValue={null} years={result.years} pick={(y) => y.presentValueFcff} format={(v) => compactMoney(v, locale)} />
+            <ForecastRow
+              label={t.fundamentalsRevenue}
+              baseValue={basePeriod?.revenue ?? null}
+              years={result.years}
+              pick={(y) => y.revenue}
+              format={(v) => compactMoney(v, locale)}
+            />
+            <ForecastRow
+              label={t.dcfRowGrowth}
+              baseValue={basePeriod?.revenueGrowth ?? null}
+              years={result.years}
+              pick={(y) => y.revenueGrowth}
+              format={(v) => percentFraction(v, locale)}
+            />
+            <ForecastRow
+              label={t.fundamentalsEbit}
+              baseValue={basePeriod?.ebit ?? null}
+              years={result.years}
+              pick={(y) => y.ebit}
+              format={(v) => compactMoney(v, locale)}
+            />
+            <ForecastRow
+              label={t.fundamentalsEbitMargin}
+              baseValue={basePeriod?.ebitMargin ?? null}
+              years={result.years}
+              pick={(y) => y.ebitMargin}
+              format={(v) => percentFraction(v, locale)}
+            />
+            <ForecastRow
+              label={t.dcfRowTax}
+              baseValue={null}
+              years={result.years}
+              pick={(y) => y.tax}
+              format={(v) => compactMoney(v, locale)}
+            />
+            <ForecastRow
+              label={t.dcfRowNopat}
+              baseValue={null}
+              years={result.years}
+              pick={(y) => y.nopat}
+              format={(v) => compactMoney(v, locale)}
+            />
+            <ForecastRow
+              label="D&A"
+              baseValue={basePeriod?.depreciationAmortization ?? null}
+              years={result.years}
+              pick={(y) => y.da}
+              format={(v) => compactMoney(v, locale)}
+            />
+            <ForecastRow
+              label={t.dcfRowCapex}
+              baseValue={basePeriod?.capex ?? null}
+              years={result.years}
+              pick={(y) => y.capex}
+              format={(v) => compactMoney(v, locale)}
+            />
+            <ForecastRow
+              label={t.dcfRowChangeNwc}
+              baseValue={basePeriod?.changeInWorkingCapital ?? null}
+              years={result.years}
+              pick={(y) => y.changeInNwc}
+              format={(v) => compactMoney(v, locale)}
+            />
+            <ForecastRow
+              label={t.dcfRowFcff}
+              baseValue={null}
+              years={result.years}
+              pick={(y) => y.fcff}
+              format={(v) => compactMoney(v, locale)}
+            />
+            <ForecastRow
+              label={t.dcfRowDiscountFactor}
+              baseValue={null}
+              years={result.years}
+              pick={(y) => y.discountFactor}
+              format={(v) => (v === null ? '—' : v.toFixed(3))}
+            />
+            <ForecastRow
+              label={t.dcfRowPvFcff}
+              baseValue={null}
+              years={result.years}
+              pick={(y) => y.presentValueFcff}
+              format={(v) => compactMoney(v, locale)}
+            />
           </tbody>
         </table>
       </div>
@@ -628,49 +760,81 @@ function ForecastRow<T extends { year: number }>({
   );
 }
 
-function DcfBridge({ t, locale, result }: { t: ReturnType<typeof getUi>; locale: Locale; result: DcfResult }) {
+function DcfBridge({
+  t,
+  locale,
+  result,
+}: {
+  t: ReturnType<typeof getUi>;
+  locale: Locale;
+  result: DcfResult;
+}) {
   return (
     <div className="dcf-bridge">
       <h3>{t.dcfBridgeTitle}</h3>
       <dl className="dcf-bridge-list">
         <div>
           <dt>{t.dcfBridgePvForecast}</dt>
-          <dd className="technical" dir="ltr">{compactMoney(result.presentValueForecast, locale)}</dd>
+          <dd className="technical" dir="ltr">
+            {compactMoney(result.presentValueForecast, locale)}
+          </dd>
         </div>
         <div>
           <dt title={t.dcfTerminalValueHint}>{t.dcfBridgePvTerminal}</dt>
-          <dd className="technical" dir="ltr">{compactMoney(result.presentValueTerminalValue, locale)}</dd>
+          <dd className="technical" dir="ltr">
+            {compactMoney(result.presentValueTerminalValue, locale)}
+          </dd>
         </div>
         <div className="dcf-bridge-total">
           <dt title={t.dcfEnterpriseValueHint}>{t.dcfBridgeEnterpriseValue}</dt>
-          <dd className="technical" dir="ltr">{compactMoney(result.enterpriseValue, locale)}</dd>
+          <dd className="technical" dir="ltr">
+            {compactMoney(result.enterpriseValue, locale)}
+          </dd>
         </div>
         <div>
           <dt>{t.dcfBridgeNetDebt}</dt>
-          <dd className="technical" dir="ltr">{compactMoney(result.netDebt, locale)}</dd>
+          <dd className="technical" dir="ltr">
+            {compactMoney(result.netDebt, locale)}
+          </dd>
         </div>
         <div className="dcf-bridge-total">
           <dt title={t.dcfEquityValueHint}>{t.dcfBridgeEquityValue}</dt>
-          <dd className="technical" dir="ltr">{compactMoney(result.equityValue, locale)}</dd>
+          <dd className="technical" dir="ltr">
+            {compactMoney(result.equityValue, locale)}
+          </dd>
         </div>
         <div>
           <dt>{t.fundamentalsSharesOutstanding}</dt>
-          <dd className="technical" dir="ltr">{compactCount(result.sharesOutstanding, locale)}</dd>
+          <dd className="technical" dir="ltr">
+            {compactCount(result.sharesOutstanding, locale)}
+          </dd>
         </div>
         <div className="dcf-bridge-total">
           <dt>{t.dcfHeadlineValue}</dt>
-          <dd className="technical" dir="ltr">{moneyPerShare(result.valuePerShare, locale)}</dd>
+          <dd className="technical" dir="ltr">
+            {moneyPerShare(result.valuePerShare, locale)}
+          </dd>
         </div>
         <div>
           <dt>{t.dcfTerminalValueShare}</dt>
-          <dd className="technical" dir="ltr">{percentFraction(result.terminalValueShareOfEv, locale)}</dd>
+          <dd className="technical" dir="ltr">
+            {percentFraction(result.terminalValueShareOfEv, locale)}
+          </dd>
         </div>
       </dl>
     </div>
   );
 }
 
-function DcfSensitivity({ t, locale, matrix }: { t: ReturnType<typeof getUi>; locale: Locale; matrix: SensitivityMatrix }) {
+function DcfSensitivity({
+  t,
+  locale,
+  matrix,
+}: {
+  t: ReturnType<typeof getUi>;
+  locale: Locale;
+  matrix: SensitivityMatrix;
+}) {
   return (
     <div className="dcf-sensitivity">
       <h3>{t.dcfSensitivityTitle}</h3>
@@ -679,7 +843,9 @@ function DcfSensitivity({ t, locale, matrix }: { t: ReturnType<typeof getUi>; lo
         <table className="table dcf-sensitivity-table">
           <thead>
             <tr>
-              <th dir="ltr">{t.dcfSensitivityWaccAxis} \ {t.dcfSensitivityGrowthAxis}</th>
+              <th dir="ltr">
+                {t.dcfSensitivityWaccAxis} \ {t.dcfSensitivityGrowthAxis}
+              </th>
               {matrix.terminalGrowthAxis.map((g) => (
                 <th key={g} className="technical" dir="ltr">
                   {percentFraction(g, locale)}
@@ -699,7 +865,9 @@ function DcfSensitivity({ t, locale, matrix }: { t: ReturnType<typeof getUi>; lo
                     className={`technical dcf-sensitivity-cell${cell.isBaseCase ? ' base-case' : ''}`}
                     dir="ltr"
                   >
-                    {cell.invalid || cell.valuePerShare === null ? '—' : moneyPerShare(cell.valuePerShare, locale)}
+                    {cell.invalid || cell.valuePerShare === null
+                      ? '—'
+                      : moneyPerShare(cell.valuePerShare, locale)}
                   </td>
                 ))}
               </tr>

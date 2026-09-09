@@ -54,7 +54,12 @@ describe('buildSensitivityMatrix', () => {
 
   it('never computes an invalid cell where wacc <= terminal growth, returning null with invalid=true instead', () => {
     const wideAxes = { waccAxis: [0.01, 0.02, 0.03], terminalGrowthAxis: [0.02, 0.03, 0.04] };
-    const wideMatrix = buildSensitivityMatrix(base, assumptions, wideAxes.waccAxis, wideAxes.terminalGrowthAxis);
+    const wideMatrix = buildSensitivityMatrix(
+      base,
+      assumptions,
+      wideAxes.waccAxis,
+      wideAxes.terminalGrowthAxis,
+    );
     for (let i = 0; i < wideAxes.waccAxis.length; i += 1) {
       for (let j = 0; j < wideAxes.terminalGrowthAxis.length; j += 1) {
         const wacc = wideAxes.waccAxis[i]!;

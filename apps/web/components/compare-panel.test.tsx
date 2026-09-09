@@ -40,7 +40,9 @@ function valuation(overrides: Partial<ValuationSnapshot> = {}): ValuationSnapsho
   };
 }
 
-function security(overrides: Partial<CompareSecurityDetail> & { id: string }): CompareSecurityDetail {
+function security(
+  overrides: Partial<CompareSecurityDetail> & { id: string },
+): CompareSecurityDetail {
   return {
     ticker: overrides.id.toUpperCase(),
     name: `${overrides.id} co`,
@@ -63,7 +65,10 @@ describe('ComparePanel fundamentals/valuation integration', () => {
     const html = renderToStaticMarkup(
       createElement(ComparePanel, {
         locale: 'en',
-        securities: [security({ id: 'iam' }), security({ id: 'atw', valuation: valuation({ pe: 17.6 }) })],
+        securities: [
+          security({ id: 'iam' }),
+          security({ id: 'atw', valuation: valuation({ pe: 17.6 }) }),
+        ],
       }),
     );
     expect(html).toContain('14.2x');
@@ -85,7 +90,10 @@ describe('ComparePanel fundamentals/valuation integration', () => {
     const html = renderToStaticMarkup(
       createElement(ComparePanel, {
         locale: 'en',
-        securities: [security({ id: 'iam' }), security({ id: 'unknown', valuation: noFundamentals })],
+        securities: [
+          security({ id: 'iam' }),
+          security({ id: 'unknown', valuation: noFundamentals }),
+        ],
       }),
     );
     expect(html).toContain('—');

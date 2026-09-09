@@ -93,7 +93,9 @@ describe('SecurityDcfSection', () => {
   it('shows the no-fundamentals state and "no historical reference" for every assumption when there is no historical data at all', () => {
     const html = renderToStaticMarkup(createElement(SecurityDcfSection, emptyProps));
     expect(html).toContain('No historical fundamentals are available yet for this security');
-    expect((html.match(/No historical reference available/g) ?? []).length).toBeGreaterThanOrEqual(6);
+    expect((html.match(/No historical reference available/g) ?? []).length).toBeGreaterThanOrEqual(
+      6,
+    );
   });
 
   it('still lets an investor without any fundamentals edit base revenue manually (input is present and empty, not disabled)', () => {
@@ -123,13 +125,17 @@ describe('SecurityDcfSection', () => {
   });
 
   it('renders French terminology', () => {
-    const html = renderToStaticMarkup(createElement(SecurityDcfSection, { ...populatedProps, locale: 'fr' }));
+    const html = renderToStaticMarkup(
+      createElement(SecurityDcfSection, { ...populatedProps, locale: 'fr' }),
+    );
     expect(html).toContain('Valorisation intrinsèque');
     expect(html).toContain('Hypothèses');
   });
 
   it('renders Arabic with technical values kept LTR-isolated', () => {
-    const html = renderToStaticMarkup(createElement(SecurityDcfSection, { ...populatedProps, locale: 'ar' }));
+    const html = renderToStaticMarkup(
+      createElement(SecurityDcfSection, { ...populatedProps, locale: 'ar' }),
+    );
     expect(html).toContain('التدفقات النقدية المخصومة');
     expect(html).toContain('dir="ltr"');
   });

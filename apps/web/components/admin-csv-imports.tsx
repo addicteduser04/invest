@@ -77,7 +77,10 @@ interface Copy {
   colReviewer: string;
   colPublished: string;
   colActions: string;
-  statusLabels: Record<'uploaded' | 'previewed' | 'quarantined' | 'approved' | 'rejected' | 'published' | 'failed', string>;
+  statusLabels: Record<
+    'uploaded' | 'previewed' | 'quarantined' | 'approved' | 'rejected' | 'published' | 'failed',
+    string
+  >;
   emptyHistoryTitle: string;
   emptyHistorySubtitle: string;
   marketDataOpsLink: string;
@@ -118,7 +121,8 @@ const copy: Record<Locale, Copy> = {
     uploadedBy: 'Uploaded by',
     required: 'Required',
     requiredValue: 'a different data administrator',
-    ownUploadNotice: 'You uploaded this file. Publication must be approved by a different data administrator.',
+    ownUploadNotice:
+      'You uploaded this file. Publication must be approved by a different data administrator.',
     approve: 'Approve & publish',
     reason: 'Review reason',
     reasonHint: 'Briefly note what you reviewed before approving.',
@@ -144,7 +148,8 @@ const copy: Record<Locale, Copy> = {
     emptyHistorySubtitle: 'Upload a CSV above to start the review workflow.',
     marketDataOpsLink: 'Market data operations',
     dash: '—',
-    publishedResult: (rows: number) => `Published ${rows} rows. Reload this page to refresh the list.`,
+    publishedResult: (rows: number) =>
+      `Published ${rows} rows. Reload this page to refresh the list.`,
   },
   fr: {
     eyebrow: 'Imports CSV',
@@ -329,7 +334,10 @@ export function AdminCsvImports({
     formData.set('ticker', tickerCol);
     formData.set('close', closeCol);
     try {
-      const response = await fetch('/api/admin/imports/preview', { method: 'POST', body: formData });
+      const response = await fetch('/api/admin/imports/preview', {
+        method: 'POST',
+        body: formData,
+      });
       const body = (await response.json()) as PreviewResponse;
       setPreview(body);
       setPhase(response.ok ? 'valid' : 'invalid');
@@ -349,7 +357,9 @@ export function AdminCsvImports({
         body: JSON.stringify({ reason }),
       });
       const body = (await response.json()) as { publishedRows?: number; error?: string };
-      setPublishResult(response.ok ? t.publishedResult(body.publishedRows ?? 0) : String(body.error ?? 'Error'));
+      setPublishResult(
+        response.ok ? t.publishedResult(body.publishedRows ?? 0) : String(body.error ?? 'Error'),
+      );
     } finally {
       setBusy(false);
     }
@@ -432,7 +442,11 @@ export function AdminCsvImports({
           )}
         </div>
 
-        <button type="button" className="advanced-toggle" onClick={() => setAdvancedOpen((v) => !v)}>
+        <button
+          type="button"
+          className="advanced-toggle"
+          onClick={() => setAdvancedOpen((v) => !v)}
+        >
           {t.advancedMapping}
         </button>
         {advancedOpen ? (
@@ -467,7 +481,11 @@ export function AdminCsvImports({
           </div>
         ) : null}
 
-        <button className="button" disabled={!file || phase === 'uploading'} onClick={() => void submit()}>
+        <button
+          className="button"
+          disabled={!file || phase === 'uploading'}
+          onClick={() => void submit()}
+        >
           {phase === 'uploading' ? t.uploading : t.upload}
         </button>
 
@@ -524,7 +542,9 @@ export function AdminCsvImports({
                         {t.statusLabels[run.status as keyof typeof t.statusLabels] ?? run.status}
                       </span>
                       {run.validation_report?.warnings?.length ? (
-                        <small className="warning-text">{run.validation_report.warnings.join(' · ')}</small>
+                        <small className="warning-text">
+                          {run.validation_report.warnings.join(' · ')}
+                        </small>
                       ) : null}
                     </td>
                     <td data-label={t.colCreated} className="technical" dir="ltr">
@@ -540,10 +560,16 @@ export function AdminCsvImports({
                       {run.proposed_by === currentUserId ? t.you : run.proposed_by.slice(0, 8)}
                     </td>
                     <td data-label={t.colReviewer} className="technical" dir="ltr">
-                      {run.reviewed_by === null ? t.dash : run.reviewed_by === currentUserId ? t.you : run.reviewed_by.slice(0, 8)}
+                      {run.reviewed_by === null
+                        ? t.dash
+                        : run.reviewed_by === currentUserId
+                          ? t.you
+                          : run.reviewed_by.slice(0, 8)}
                     </td>
                     <td data-label={t.colPublished} className="technical" dir="ltr">
-                      {run.published_at ? new Date(run.published_at).toLocaleDateString(localeTag(locale)) : t.dash}
+                      {run.published_at
+                        ? new Date(run.published_at).toLocaleDateString(localeTag(locale))
+                        : t.dash}
                     </td>
                     <td data-label={t.colActions}>
                       {run.status === 'previewed' ? (
@@ -552,7 +578,12 @@ export function AdminCsvImports({
                             {t.required}: {t.requiredValue}
                           </span>
                         ) : (
-                          <Approval disabled={busy} label={t.approve} reasonLabel={t.reason} onApprove={(reason) => publish(run.id, reason)} />
+                          <Approval
+                            disabled={busy}
+                            label={t.approve}
+                            reasonLabel={t.reason}
+                            onApprove={(reason) => publish(run.id, reason)}
+                          />
                         )
                       ) : (
                         t.dash
@@ -594,7 +625,10 @@ function WorkflowStatus({
         const isDone = !isFailed && failedIndex === null && index <= lastCompleted;
         const isCurrent = !isFailed && failedIndex === null && index === lastCompleted + 1;
         return (
-          <li key={label} className={isFailed ? 'is-failed' : isDone ? 'is-done' : isCurrent ? 'is-current' : ''}>
+          <li
+            key={label}
+            className={isFailed ? 'is-failed' : isDone ? 'is-done' : isCurrent ? 'is-current' : ''}
+          >
             {isFailed ? t.stepRejected : label}
           </li>
         );
@@ -616,13 +650,20 @@ function ImportPreviewPanel({
   t: Copy;
   locale: Locale;
   preview: PreviewResponse;
-  summary: { rowCount: number; tickers: string[]; startDate: string | undefined; endDate: string | undefined } | null;
+  summary: {
+    rowCount: number;
+    tickers: string[];
+    startDate: string | undefined;
+    endDate: string | undefined;
+  } | null;
   currentUserId: string;
   runs: CsvImportRun[];
   busy: boolean;
   onApprove: (id: string, reason: string) => Promise<void>;
 }) {
-  const matchedRun = preview.ingestionRunId ? runs.find((r) => r.id === preview.ingestionRunId) : undefined;
+  const matchedRun = preview.ingestionRunId
+    ? runs.find((r) => r.id === preview.ingestionRunId)
+    : undefined;
   return (
     <div className="csv-preview-panel" role="status">
       <h3>{t.previewTitle}</h3>
@@ -697,11 +738,17 @@ function ImportPreviewPanel({
         <div className="csv-two-admin-panel">
           <strong>{t.reviewTitle}</strong>
           <p>
-            {t.uploadedBy}: {t.you} · {t.required}: <span dir={locale === 'ar' ? 'rtl' : 'ltr'}>{t.requiredValue}</span>
+            {t.uploadedBy}: {t.you} · {t.required}:{' '}
+            <span dir={locale === 'ar' ? 'rtl' : 'ltr'}>{t.requiredValue}</span>
           </p>
           <p className="microcopy">{t.ownUploadNotice}</p>
           {matchedRun && matchedRun.proposed_by !== currentUserId ? (
-            <Approval disabled={busy} label={t.approve} reasonLabel={t.reason} onApprove={(reason) => onApprove(matchedRun.id, reason)} />
+            <Approval
+              disabled={busy}
+              label={t.approve}
+              reasonLabel={t.reason}
+              onApprove={(reason) => onApprove(matchedRun.id, reason)}
+            />
           ) : null}
         </div>
       ) : null}
@@ -723,7 +770,11 @@ function Approval({
   const [reason, setReason] = useState('');
   return (
     <div className="approval-control">
-      <input aria-label={reasonLabel} value={reason} onChange={(event) => setReason(event.target.value)} />
+      <input
+        aria-label={reasonLabel}
+        value={reason}
+        onChange={(event) => setReason(event.target.value)}
+      />
       <button
         type="button"
         className="button compact"

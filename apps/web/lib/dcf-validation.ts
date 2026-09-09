@@ -113,13 +113,21 @@ export function validateDcfInputs(
   // missing, zero and negative share counts are all "no valid per-share value", not a reason to
   // refuse the whole model.
   if (base.sharesOutstanding === null) {
-    issues.push({ code: 'MISSING_SHARES_OUTSTANDING', field: 'sharesOutstanding', blocking: false });
+    issues.push({
+      code: 'MISSING_SHARES_OUTSTANDING',
+      field: 'sharesOutstanding',
+      blocking: false,
+    });
   } else if (!isFiniteNumber(base.sharesOutstanding)) {
     issues.push({ code: 'NON_FINITE_ASSUMPTION', field: 'sharesOutstanding', blocking: false });
   } else if (base.sharesOutstanding < 0) {
     issues.push({ code: 'NEGATIVE_SHARES', field: 'sharesOutstanding', blocking: false });
   } else if (base.sharesOutstanding === 0) {
-    issues.push({ code: 'MISSING_SHARES_OUTSTANDING', field: 'sharesOutstanding', blocking: false });
+    issues.push({
+      code: 'MISSING_SHARES_OUTSTANDING',
+      field: 'sharesOutstanding',
+      blocking: false,
+    });
   }
 
   if (base.cash !== null && !isFiniteNumber(base.cash)) {

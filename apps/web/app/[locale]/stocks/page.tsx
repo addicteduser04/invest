@@ -602,7 +602,9 @@ export default async function StocksPage({
                         {formatVolume(volume, locale)}
                       </span>
                       <MiniSparkline points={priceHistory.get(security.id)?.points ?? []} />
-                      <span className="stocks-v2-session">{security.latest_market_date ?? '—'}</span>
+                      <span className="stocks-v2-session">
+                        {security.latest_market_date ?? '—'}
+                      </span>
                     </>
                   ) : null}
 

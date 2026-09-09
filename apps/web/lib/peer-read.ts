@@ -192,7 +192,9 @@ export async function readPeerComparison(securityId: string): Promise<PeerCompar
 
   const { data: targetRow } = await supabase
     .from('market_security_overview')
-    .select('id,ticker,name,sector,listing_status,is_synthetic,latest_close_price,latest_market_date')
+    .select(
+      'id,ticker,name,sector,listing_status,is_synthetic,latest_close_price,latest_market_date',
+    )
     .eq('id', securityId)
     .maybeSingle();
   if (!targetRow) return null;

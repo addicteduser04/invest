@@ -46,7 +46,12 @@ describe('deriveDcfDefaults', () => {
 
   it('computes D&A / capex / change-in-NWC as % of revenue from the same recent periods', () => {
     const periods = [
-      period({ revenue: 1000, depreciationAmortization: 50, capex: 60, changeInWorkingCapital: 10 }),
+      period({
+        revenue: 1000,
+        depreciationAmortization: 50,
+        capex: 60,
+        changeInWorkingCapital: 10,
+      }),
     ];
     const defaults = deriveDcfDefaults(periods);
     expect(defaults.daPercentRevenue.value).toBeCloseTo(0.05, 10);

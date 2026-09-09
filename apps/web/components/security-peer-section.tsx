@@ -144,9 +144,7 @@ export function SecurityPeerSection({
               <th>{t.peerTableCompany}</th>
               <th>{t.peerTableTicker}</th>
               {TABLE_METRICS.map((metric) => (
-                <th key={metric.key}>
-                  {t[metric.labelKey]}
-                </th>
+                <th key={metric.key}>{t[metric.labelKey]}</th>
               ))}
             </tr>
           </thead>

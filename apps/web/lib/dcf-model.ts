@@ -15,7 +15,11 @@
  * assumption editor a short, auditable list rather than an N-column grid, matching the product's
  * "do not over-engineer" guidance. Revenue still compounds year over year even under a flat rate.
  */
-import { validateDcfInputs, type DcfAssumptionsInput, type DcfBaseInputsInput } from '@/lib/dcf-validation';
+import {
+  validateDcfInputs,
+  type DcfAssumptionsInput,
+  type DcfBaseInputsInput,
+} from '@/lib/dcf-validation';
 
 export interface DcfAssumptions {
   forecastYears: number;
@@ -123,7 +127,8 @@ export function projectDcf(base: DcfBaseInputs, assumptions: DcfAssumptions): Dc
 
   const shares = base.sharesOutstanding;
   const valuePerShare = shares !== null && shares > 0 ? equityValue / shares : null;
-  const terminalValueShareOfEv = enterpriseValue !== 0 ? presentValueTerminalValue / enterpriseValue : null;
+  const terminalValueShareOfEv =
+    enterpriseValue !== 0 ? presentValueTerminalValue / enterpriseValue : null;
 
   return {
     years,

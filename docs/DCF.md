@@ -27,7 +27,7 @@ finance formula is duplicated in a React component.
 **Flat assumptions, not a year-by-year grid.** Every rate assumption (revenue growth, EBIT
 margin, tax rate, D&A/capex/ΔNWC as % of revenue) is a single number applied uniformly across the
 whole forecast horizon — not a separate value per year. Revenue still compounds year over year;
-only the *rate* is held flat. This keeps the assumption editor a short, auditable list instead of
+only the _rate_ is held flat. This keeps the assumption editor a short, auditable list instead of
 an N-column grid, matching the product's "do not over-engineer" guidance. A future milestone could
 allow per-year overrides without changing the engine's shape.
 
@@ -60,9 +60,10 @@ its `publication_date` is known and not in the future; among usable periods, the
 FY2025 as the base year — no new "latest" rule was introduced for DCF.
 
 Each period distinguishes what is directly reported from what is computed:
+
 - **Historical** (straight from the row): revenue, EBIT, EBITDA, D&A, tax expense, operating cash
   flow, capex, working capital, cash, total debt, shares outstanding.
-- **Derived**: revenue growth (YoY vs. the prior period of the *same* `period_type`/
+- **Derived**: revenue growth (YoY vs. the prior period of the _same_ `period_type`/
   `interim_period`), EBIT margin, effective tax rate, FCFF.
 - **Change in working capital** is the one field with two possible sources, and the period record
   says which: a **historical** value from a directly-reported `change_in_working_capital` cell

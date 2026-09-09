@@ -88,11 +88,7 @@ describe('SecurityPeerSection', () => {
 
   it('shows a dedicated empty state when the target has no sector', () => {
     const noSectorTarget: PeerSecurityMeta = { ...target, sector: null };
-    const comparison = buildPeerComparison(
-      noSectorTarget,
-      [],
-      new Map([['target', snapshot()]]),
-    );
+    const comparison = buildPeerComparison(noSectorTarget, [], new Map([['target', snapshot()]]));
     const html = renderToStaticMarkup(
       createElement(SecurityPeerSection, { locale: 'en', comparison }),
     );

@@ -55,7 +55,10 @@ export function pb(marketCapValue: number | null, totalEquity: string | null): n
 
 /** EV/EBITDA. Not meaningful (null) when EBITDA is zero or negative. EV itself is allowed to be
  * negative (a net-cash company) -- only the EBITDA denominator is guarded. */
-export function evEbitda(enterpriseValueValue: number | null, ebitda: string | null): number | null {
+export function evEbitda(
+  enterpriseValueValue: number | null,
+  ebitda: string | null,
+): number | null {
   const e = toNumber(ebitda);
   if (enterpriseValueValue === null || e === null || e <= 0) return null;
   return finiteOrNull(enterpriseValueValue / e);
@@ -63,7 +66,10 @@ export function evEbitda(enterpriseValueValue: number | null, ebitda: string | n
 
 /** dividend_yield = dividend_per_share / latest_price. A dividend of exactly 0 is a legitimate,
  * known fact (no distribution) and yields 0 -- only a *missing* dividend or price is null. */
-export function dividendYield(dividendPerShare: string | null, price: string | null): number | null {
+export function dividendYield(
+  dividendPerShare: string | null,
+  price: string | null,
+): number | null {
   const dps = toNumber(dividendPerShare);
   const p = toNumber(price);
   if (dps === null || p === null || p <= 0) return null;
@@ -73,7 +79,10 @@ export function dividendYield(dividendPerShare: string | null, price: string | n
 /** earnings_yield = net_income / market_cap. Unlike P/E, this stays well-behaved for a
  * loss-making company (a negative yield is meaningful, not a mangled inverted multiple), so it
  * is not restricted to positive net income. */
-export function earningsYield(netIncome: string | null, marketCapValue: number | null): number | null {
+export function earningsYield(
+  netIncome: string | null,
+  marketCapValue: number | null,
+): number | null {
   const income = toNumber(netIncome);
   if (income === null || marketCapValue === null || marketCapValue <= 0) return null;
   return finiteOrNull(income / marketCapValue);
@@ -81,7 +90,10 @@ export function earningsYield(netIncome: string | null, marketCapValue: number |
 
 /** fcf_yield = free_cash_flow / market_cap. Free cash flow may legitimately be negative; only
  * the market-cap denominator is guarded (must be a positive, known value). */
-export function fcfYield(freeCashFlow: number | null, marketCapValue: number | null): number | null {
+export function fcfYield(
+  freeCashFlow: number | null,
+  marketCapValue: number | null,
+): number | null {
   if (freeCashFlow === null || marketCapValue === null || marketCapValue <= 0) return null;
   return finiteOrNull(freeCashFlow / marketCapValue);
 }

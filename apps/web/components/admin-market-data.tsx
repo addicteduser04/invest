@@ -483,8 +483,7 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
   }, [snapshot, coverageSearch, coverageFilter, coverageSort]);
 
   const lastRunMetrics = lastRun?.['metrics'] as
-    | { securitiesFailed?: number; indicesFailed?: number }
-    | undefined;
+    { securitiesFailed?: number; indicesFailed?: number } | undefined;
   const providerLabel = provider.id
     ? (t.providerLabels[provider.id as keyof typeof t.providerLabels] ?? provider.id)
     : t.providerUnavailable;
@@ -546,7 +545,9 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
           <div>
             <dt>{t.equityFailures}</dt>
             <dd
-              className={lastRunMetrics?.securitiesFailed ? 'is-technical error-text' : 'is-technical'}
+              className={
+                lastRunMetrics?.securitiesFailed ? 'is-technical error-text' : 'is-technical'
+              }
               dir="ltr"
             >
               {lastRunMetrics?.securitiesFailed ?? 0}

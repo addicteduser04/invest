@@ -17,7 +17,9 @@ describe('valuation-read public-read boundary', () => {
   });
 
   it('never selects admin/audit-only columns', () => {
-    expect(source).not.toMatch(/created_by|validation_report|import_run|source_hash|source_provider_id/);
+    expect(source).not.toMatch(
+      /created_by|validation_report|import_run|source_hash|source_provider_id/,
+    );
   });
 
   it('never queries the raw market.fundamentals table', () => {

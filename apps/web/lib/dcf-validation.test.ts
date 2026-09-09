@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { validateDcfInputs, type DcfAssumptionsInput, type DcfBaseInputsInput } from './dcf-validation';
+import {
+  validateDcfInputs,
+  type DcfAssumptionsInput,
+  type DcfBaseInputsInput,
+} from './dcf-validation';
 
-const validBase: DcfBaseInputsInput = { baseRevenue: 1000, cash: 100, totalDebt: 200, sharesOutstanding: 100 };
+const validBase: DcfBaseInputsInput = {
+  baseRevenue: 1000,
+  cash: 100,
+  totalDebt: 200,
+  sharesOutstanding: 100,
+};
 const validAssumptions: DcfAssumptionsInput = {
   forecastYears: 5,
   revenueGrowth: 0.1,
@@ -21,7 +30,11 @@ describe('validateDcfInputs', () => {
 
   it('flags missing base revenue as blocking', () => {
     const issues = validateDcfInputs({ ...validBase, baseRevenue: null }, validAssumptions);
-    expect(issues).toContainEqual({ code: 'MISSING_BASE_REVENUE', field: 'baseRevenue', blocking: true });
+    expect(issues).toContainEqual({
+      code: 'MISSING_BASE_REVENUE',
+      field: 'baseRevenue',
+      blocking: true,
+    });
   });
 
   it('flags missing WACC and missing terminal growth as blocking', () => {
@@ -45,17 +58,23 @@ describe('validateDcfInputs', () => {
   });
 
   it('does not flag wacc <= terminal growth when either is not yet provided', () => {
-    const issues = validateDcfInputs(validBase, { ...validAssumptions, wacc: null, terminalGrowth: null });
+    const issues = validateDcfInputs(validBase, {
+      ...validAssumptions,
+      wacc: null,
+      terminalGrowth: null,
+    });
     expect(issues.some((i) => i.code === 'WACC_NOT_ABOVE_TERMINAL_GROWTH')).toBe(false);
   });
 
   it('flags an out-of-range or non-integer forecast horizon as blocking', () => {
-    expect(
-      validateDcfInputs(validBase, { ...validAssumptions, forecastYears: 2 }),
-    ).toContainEqual({ code: 'INVALID_FORECAST_HORIZON', field: 'forecastYears', blocking: true });
-    expect(
-      validateDcfInputs(validBase, { ...validAssumptions, forecastYears: 11 }),
-    ).toContainEqual({ code: 'INVALID_FORECAST_HORIZON', field: 'forecastYears', blocking: true });
+    expect(validateDcfInputs(validBase, { ...validAssumptions, forecastYears: 2 })).toContainEqual({
+      code: 'INVALID_FORECAST_HORIZON',
+      field: 'forecastYears',
+      blocking: true,
+    });
+    expect(validateDcfInputs(validBase, { ...validAssumptions, forecastYears: 11 })).toContainEqual(
+      { code: 'INVALID_FORECAST_HORIZON', field: 'forecastYears', blocking: true },
+    );
     expect(
       validateDcfInputs(validBase, { ...validAssumptions, forecastYears: 5.5 }),
     ).toContainEqual({ code: 'INVALID_FORECAST_HORIZON', field: 'forecastYears', blocking: true });
@@ -97,7 +116,10 @@ describe('validateDcfInputs', () => {
 
   it('flags missing, zero and negative shares outstanding as non-blocking', () => {
     for (const shares of [null, 0]) {
-      const issues = validateDcfInputs({ ...validBase, sharesOutstanding: shares }, validAssumptions);
+      const issues = validateDcfInputs(
+        { ...validBase, sharesOutstanding: shares },
+        validAssumptions,
+      );
       expect(issues).toContainEqual({
         code: 'MISSING_SHARES_OUTSTANDING',
         field: 'sharesOutstanding',
@@ -105,15 +127,23 @@ describe('validateDcfInputs', () => {
       });
     }
     const negative = validateDcfInputs({ ...validBase, sharesOutstanding: -10 }, validAssumptions);
-    expect(negative).toContainEqual({ code: 'NEGATIVE_SHARES', field: 'sharesOutstanding', blocking: false });
+    expect(negative).toContainEqual({
+      code: 'NEGATIVE_SHARES',
+      field: 'sharesOutstanding',
+      blocking: false,
+    });
     // None of the shares-related issues should block the rest of the model.
     expect(negative.some((i) => i.blocking)).toBe(false);
   });
 
   it('flags missing cash/debt as non-issues but non-finite cash/debt as blocking', () => {
-    expect(validateDcfInputs({ ...validBase, cash: null, totalDebt: null }, validAssumptions)).toEqual([]);
     expect(
-      validateDcfInputs({ ...validBase, cash: Number.NaN }, validAssumptions),
-    ).toContainEqual({ code: 'NON_FINITE_ASSUMPTION', field: 'cash', blocking: true });
+      validateDcfInputs({ ...validBase, cash: null, totalDebt: null }, validAssumptions),
+    ).toEqual([]);
+    expect(validateDcfInputs({ ...validBase, cash: Number.NaN }, validAssumptions)).toContainEqual({
+      code: 'NON_FINITE_ASSUMPTION',
+      field: 'cash',
+      blocking: true,
+    });
   });
 });

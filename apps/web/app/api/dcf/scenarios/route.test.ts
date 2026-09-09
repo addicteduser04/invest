@@ -32,9 +32,12 @@ vi.mock('@/lib/supabase/server', () => ({
             }),
           }),
         }),
-        upsert: (
-          values: { user_id: string; security_id: string; name: string; assumptions: unknown },
-        ) => ({
+        upsert: (values: {
+          user_id: string;
+          security_id: string;
+          name: string;
+          assumptions: unknown;
+        }) => ({
           select: () => ({
             single: async () => {
               const existingIndex = state.rows.findIndex(
@@ -44,7 +47,10 @@ vi.mock('@/lib/supabase/server', () => ({
                   row.name === values.name,
               );
               const row: StoredScenario = {
-                id: existingIndex >= 0 ? state.rows[existingIndex]!.id : `scenario-${state.rows.length + 1}`,
+                id:
+                  existingIndex >= 0
+                    ? state.rows[existingIndex]!.id
+                    : `scenario-${state.rows.length + 1}`,
                 user_id: values.user_id,
                 security_id: values.security_id,
                 name: values.name,
@@ -86,9 +92,9 @@ describe('DCF scenario persistence route', () => {
 
   it('denies an unauthenticated GET and POST', async () => {
     expect((await GET(getReq(SECURITY_A))).status).toBe(401);
-    expect((await POST(postReq({ securityId: SECURITY_A, name: 'Base', assumptions: {} }))).status).toBe(
-      401,
-    );
+    expect(
+      (await POST(postReq({ securityId: SECURITY_A, name: 'Base', assumptions: {} }))).status,
+    ).toBe(401);
   });
 
   it('requires securityId, name and assumptions on POST', async () => {

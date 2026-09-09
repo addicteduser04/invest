@@ -6,7 +6,10 @@ import {
   revenueGrowth as revenueGrowthYoY,
   type FundamentalsFigures,
 } from '@/lib/fundamentals-metrics';
-import { selectLatestUsablePeriod, type FundamentalsRow as ValuationFundamentalsRow } from '@/lib/valuation-read';
+import {
+  selectLatestUsablePeriod,
+  type FundamentalsRow as ValuationFundamentalsRow,
+} from '@/lib/valuation-read';
 
 /**
  * Canonical DCF historical-input read model. Turns approved (`security_fundamentals`)
@@ -104,7 +107,10 @@ function buildPeriod(row: FundamentalsRow, priorRow: FundamentalsRow | null): Dc
   const reportedChange = toNumber(toStringOrNull(row.change_in_working_capital));
   const derivedChange =
     workingCapital !== null && priorWorkingCapital !== null
-      ? deriveChangeInWorkingCapital({ workingCapital: String(workingCapital) }, { workingCapital: String(priorWorkingCapital) })
+      ? deriveChangeInWorkingCapital(
+          { workingCapital: String(workingCapital) },
+          { workingCapital: String(priorWorkingCapital) },
+        )
       : null;
   const changeInWorkingCapital = reportedChange ?? derivedChange;
   const changeInWorkingCapitalSource: DcfHistoricalPeriod['changeInWorkingCapitalSource'] =
@@ -139,12 +145,21 @@ function buildPeriod(row: FundamentalsRow, priorRow: FundamentalsRow | null): Dc
  * already-fetched rows. Split out from readDcfHistoricalInputs so it is directly unit-testable
  * without a database (mirrors buildValuationSnapshot / buildPeerComparison in the frozen
  * valuation/peer modules). */
-export function buildDcfHistoricalInputs(securityId: string, rows: FundamentalsRow[], todayIso: string): DcfHistoricalInputs {
+export function buildDcfHistoricalInputs(
+  securityId: string,
+  rows: FundamentalsRow[],
+  todayIso: string,
+): DcfHistoricalInputs {
   const ascending = [...rows].sort((a, b) => a.period_end_date.localeCompare(b.period_end_date));
   const periods = ascending.map((row) => buildPeriod(row, findPriorMatchingPeriod(rows, row)));
 
   const usableRow = selectLatestUsablePeriod(rows, todayIso);
-  const basePeriod = usableRow ? periods.find((p) => p.periodEndDate === usableRow.period_end_date && p.periodType === usableRow.period_type) ?? null : null;
+  const basePeriod = usableRow
+    ? (periods.find(
+        (p) =>
+          p.periodEndDate === usableRow.period_end_date && p.periodType === usableRow.period_type,
+      ) ?? null)
+    : null;
 
   return { securityId, periods, basePeriod };
 }

@@ -40,7 +40,11 @@ describe('selectLatestUsablePeriod', () => {
   });
 
   it('does not let an unknown publication date outrank a known-published, chronologically earlier period', () => {
-    const published = row({ id: 'a', period_end_date: '2025-12-31', publication_date: '2026-02-18' });
+    const published = row({
+      id: 'a',
+      period_end_date: '2025-12-31',
+      publication_date: '2026-02-18',
+    });
     const unpublishedButLater = row({
       id: 'b',
       period_type: 'interim',

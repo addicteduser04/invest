@@ -49,9 +49,7 @@ export function buildSensitivityMatrix(
   const cells = waccAxis.map((wacc) =>
     terminalGrowthAxis.map((terminalGrowth): SensitivityCell => {
       const invalid = wacc <= terminalGrowth;
-      const run = invalid
-        ? null
-        : runDcf(base, { ...assumptions, wacc, terminalGrowth });
+      const run = invalid ? null : runDcf(base, { ...assumptions, wacc, terminalGrowth });
       return {
         wacc,
         terminalGrowth,

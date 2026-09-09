@@ -206,19 +206,26 @@ export function sortSecurities<T extends SortableSecurity>(
     }
     if (sort === 'change')
       return (
-        compareForSort(toNum(left.daily_change_percent), toNum(right.daily_change_percent), direction) ||
-        left.ticker.localeCompare(right.ticker)
+        compareForSort(
+          toNum(left.daily_change_percent),
+          toNum(right.daily_change_percent),
+          direction,
+        ) || left.ticker.localeCompare(right.ticker)
       );
     if (sort === 'price')
       return (
-        compareForSort(toNum(left.latest_close_price), toNum(right.latest_close_price), direction) ||
-        left.ticker.localeCompare(right.ticker)
+        compareForSort(
+          toNum(left.latest_close_price),
+          toNum(right.latest_close_price),
+          direction,
+        ) || left.ticker.localeCompare(right.ticker)
       );
     if (sort === 'volume') {
       const leftVolume = volumeBySecurity.get(left.id) ?? null;
       const rightVolume = volumeBySecurity.get(right.id) ?? null;
       return (
-        compareForSort(leftVolume, rightVolume, direction) || left.ticker.localeCompare(right.ticker)
+        compareForSort(leftVolume, rightVolume, direction) ||
+        left.ticker.localeCompare(right.ticker)
       );
     }
     return (

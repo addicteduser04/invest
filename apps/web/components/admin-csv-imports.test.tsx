@@ -85,7 +85,14 @@ describe('AdminCsvImports', () => {
       createElement(AdminCsvImports, {
         locale: 'en',
         currentUserId: OTHER_ADMIN_ID,
-        runs: [run({ status: 'published', proposed_by: UPLOADER_ID, reviewed_by: OTHER_ADMIN_ID, published_at: '2026-09-04T12:00:00Z' })],
+        runs: [
+          run({
+            status: 'published',
+            proposed_by: UPLOADER_ID,
+            reviewed_by: OTHER_ADMIN_ID,
+            published_at: '2026-09-04T12:00:00Z',
+          }),
+        ],
       }),
     );
     expect(html).toContain('status-chip is-healthy');
