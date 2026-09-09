@@ -45,19 +45,35 @@ export async function readSecurityAnnualReports(securityId: string): Promise<Ann
     .eq('document_type', 'annual_report')
     .order('fiscal_year', { ascending: false });
   if (error) throw error;
+  return (data ?? []).map(toAnnualReportView);
+}
 
-  const rows = (data ?? []) as CompanyDocumentRow[];
-  return rows.map((row) =>
-    annualReportSchema.parse({
-      id: row.id,
-      fiscalYear: row.fiscal_year,
-      title: row.title,
-      sourceProviderId: row.source_provider_id,
-      sourceUrl: row.source_url,
-      publicationDate: row.publication_date,
-      language: row.language,
-      fileName: row.file_name,
-      fileSizeBytes: row.file_size_bytes === null ? null : Number(row.file_size_bytes),
-    }),
-  );
+/** Same shape and ordering as readSecurityAnnualReports, but reads the issuer_id-keyed public
+ * view -- used by the /companies issuer page, including for issuers with no listed security. */
+export async function readIssuerAnnualReports(issuerId: string): Promise<AnnualReportView[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('issuer_company_documents')
+    .select(
+      'id,document_type,fiscal_year,title,source_provider_id,source_url,publication_date,language,file_name,file_size_bytes',
+    )
+    .eq('issuer_id', issuerId)
+    .eq('document_type', 'annual_report')
+    .order('fiscal_year', { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map(toAnnualReportView);
+}
+
+function toAnnualReportView(row: CompanyDocumentRow): AnnualReportView {
+  return annualReportSchema.parse({
+    id: row.id,
+    fiscalYear: row.fiscal_year,
+    title: row.title,
+    sourceProviderId: row.source_provider_id,
+    sourceUrl: row.source_url,
+    publicationDate: row.publication_date,
+    language: row.language,
+    fileName: row.file_name,
+    fileSizeBytes: row.file_size_bytes === null ? null : Number(row.file_size_bytes),
+  });
 }

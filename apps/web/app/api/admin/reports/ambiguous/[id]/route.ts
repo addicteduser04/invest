@@ -27,10 +27,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const input = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
   const status = String(input.status ?? '');
   if (!['resolved', 'ignored', 'open'].includes(status)) return jsonError('INVALID_STATUS', 400);
+  const linkIssuerId = input.linkIssuerId ? String(input.linkIssuerId) : null;
 
-  const { error } = await supabase.rpc('resolve_unmatched_document_issuer', {
+  const { error } = await supabase.rpc('resolve_ambiguous_document_issuer', {
     p_id: id,
     p_status: status,
+    p_link_issuer_id: linkIssuerId,
   });
   if (error) return jsonError(error.message, 422);
   return Response.json({ status });

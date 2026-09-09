@@ -143,53 +143,67 @@ export default async function SecurityPage({
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [securityResult, historyResult, indicesResult, masiHistoryResult, fundamentals, annualReports] =
-    await Promise.all([
-      supabase
-        .from('market_security_overview')
-        .select(
-          'id,name,ticker,sector,listing_status,listed_on,is_synthetic,latest_market_date,latest_close_price,previous_market_date,previous_close_price,daily_change_percent,latest_price_provisional,latest_provider_id',
-        )
-        .eq('id', securityId)
-        .maybeSingle(),
-      supabase
-        .from('market_price_history')
-        .select('market_date,open_price,high_price,low_price,close_price,volume,status,provider_id')
-        .eq('security_id', securityId)
-        .order('market_date', { ascending: false })
-        .limit(900),
-      supabase
-        .from('market_index_overview')
-        .select('id,code,name,latest_market_date,latest_close_value,daily_change_percent')
-        .in('code', ['MASI', 'MSI20', 'ESGI', 'MASIMS'])
-        .order('code'),
-      supabase
-        .from('market_index_history')
-        .select('market_date,close_value')
-        .eq('code', 'MASI')
-        .order('market_date', { ascending: true })
-        .limit(900),
-      readSecurityFundamentals(securityId),
-      readSecurityAnnualReports(securityId),
-    ]);
+  const [
+    securityResult,
+    historyResult,
+    indicesResult,
+    masiHistoryResult,
+    fundamentals,
+    annualReports,
+    issuerSlugResult,
+  ] = await Promise.all([
+    supabase
+      .from('market_security_overview')
+      .select(
+        'id,name,ticker,sector,listing_status,listed_on,is_synthetic,latest_market_date,latest_close_price,previous_market_date,previous_close_price,daily_change_percent,latest_price_provisional,latest_provider_id',
+      )
+      .eq('id', securityId)
+      .maybeSingle(),
+    supabase
+      .from('market_price_history')
+      .select('market_date,open_price,high_price,low_price,close_price,volume,status,provider_id')
+      .eq('security_id', securityId)
+      .order('market_date', { ascending: false })
+      .limit(900),
+    supabase
+      .from('market_index_overview')
+      .select('id,code,name,latest_market_date,latest_close_value,daily_change_percent')
+      .in('code', ['MASI', 'MSI20', 'ESGI', 'MASIMS'])
+      .order('code'),
+    supabase
+      .from('market_index_history')
+      .select('market_date,close_value')
+      .eq('code', 'MASI')
+      .order('market_date', { ascending: true })
+      .limit(900),
+    readSecurityFundamentals(securityId),
+    readSecurityAnnualReports(securityId),
+    supabase.from('issuer_directory').select('slug').eq('security_id', securityId).maybeSingle(),
+  ]);
 
   const security = securityResult.data as SecurityRow | null;
   if (!security) notFound();
+  const issuerSlug = (issuerSlugResult.data as { slug: string } | null)?.slug ?? null;
 
-  const [valuationMap, peerComparison, dcfHistoricalInputs, savedScenariosResult] = await Promise.all([
-    readValuationSnapshots([
-      { id: security.id, latestPrice: security.latest_close_price, priceDate: security.latest_market_date },
-    ]),
-    readPeerComparison(security.id),
-    readDcfHistoricalInputs(security.id),
-    user
-      ? supabase
-          .from('dcf_scenarios')
-          .select('id,name,assumptions,updated_at')
-          .eq('security_id', security.id)
-          .order('updated_at', { ascending: false })
-      : Promise.resolve({ data: [] as SavedDcfScenario[] }),
-  ]);
+  const [valuationMap, peerComparison, dcfHistoricalInputs, savedScenariosResult] =
+    await Promise.all([
+      readValuationSnapshots([
+        {
+          id: security.id,
+          latestPrice: security.latest_close_price,
+          priceDate: security.latest_market_date,
+        },
+      ]),
+      readPeerComparison(security.id),
+      readDcfHistoricalInputs(security.id),
+      user
+        ? supabase
+            .from('dcf_scenarios')
+            .select('id,name,assumptions,updated_at')
+            .eq('security_id', security.id)
+            .order('updated_at', { ascending: false })
+        : Promise.resolve({ data: [] as SavedDcfScenario[] }),
+    ]);
   const valuation = valuationMap.get(security.id)!;
   const dcfDefaults = deriveDcfDefaults(dcfHistoricalInputs.periods);
   const savedDcfScenarios: SavedDcfScenario[] = (
@@ -199,7 +213,12 @@ export default async function SecurityPage({
       assumptions: unknown;
       updated_at: string;
     }>
-  ).map((row) => ({ id: row.id, name: row.name, assumptions: row.assumptions, updatedAt: row.updated_at }));
+  ).map((row) => ({
+    id: row.id,
+    name: row.name,
+    assumptions: row.assumptions,
+    updatedAt: row.updated_at,
+  }));
 
   const history = ((historyResult.data ?? []) as HistoryRow[]).reverse();
   const indices = (indicesResult.data ?? []) as IndexRow[];
@@ -385,7 +404,13 @@ export default async function SecurityPage({
       <section className="security-v2-info">
         <div>
           <p className="public-eyebrow">{t.companyOverview}</p>
-          <h2>{security.name}</h2>
+          <h2>
+            {issuerSlug ? (
+              <a href={`/${locale}/companies/${issuerSlug}`}>{security.name}</a>
+            ) : (
+              security.name
+            )}
+          </h2>
           <p>{t.noFabricatedData}</p>
         </div>
         <dl>

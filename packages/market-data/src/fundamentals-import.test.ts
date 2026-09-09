@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { previewFundamentalsCsv } from './fundamentals-import';
 
 const securities = [
-  { id: 'sec-iam', ticker: 'SYN-IAM' },
-  { id: 'sec-atw', ticker: 'SYN-ATW' },
+  { id: 'sec-iam', ticker: 'SYN-IAM', issuerId: 'issuer-iam' },
+  { id: 'sec-atw', ticker: 'SYN-ATW', issuerId: 'issuer-atw' },
+];
+const issuers = [
+  { id: 'issuer-iam', name: 'ITISSALAT AL-MAGHRIB', ammcIssuerId: '2798' },
+  { id: 'issuer-atw', name: 'ATTIJARIWAFA BANK', ammcIssuerId: null },
+  { id: 'issuer-ocp', name: 'OCP', ammcIssuerId: '13927' },
 ];
 
 const header =
@@ -12,7 +17,7 @@ const header =
 describe('fundamentals CSV preview', () => {
   it('accepts a valid annual row, including negative net income and equity', () => {
     const csv = `${header}\nSYN-IAM,2025-12-31,2026-02-15,annual,,MAD,1000,300,250,-50,-0.5,120,400,900,-20,80,60,1000000,0`;
-    const preview = previewFundamentalsCsv(csv, securities, []);
+    const preview = previewFundamentalsCsv(csv, securities, issuers, []);
     expect(preview.totals).toEqual({
       total: 1,
       valid: 1,
@@ -23,6 +28,8 @@ describe('fundamentals CSV preview', () => {
     });
     expect(preview.canConfirm).toBe(true);
     const candidate = preview.rows[0]?.candidate;
+    expect(candidate?.issuerId).toBe('issuer-iam');
+    expect(candidate?.ticker).toBe('SYN-IAM');
     expect(candidate?.netIncome).toBe('-50');
     expect(candidate?.totalEquity).toBe('-20');
     expect(candidate?.fiscalYear).toBe(2025);
@@ -31,7 +38,7 @@ describe('fundamentals CSV preview', () => {
 
   it('leaves blank optional fields as undefined rather than coercing to zero', () => {
     const csv = `${header}\nSYN-IAM,2025-12-31,,annual,,,,,,,,,,,,,,,`;
-    const preview = previewFundamentalsCsv(csv, securities, []);
+    const preview = previewFundamentalsCsv(csv, securities, issuers, []);
     expect(preview.canConfirm).toBe(true);
     const candidate = preview.rows[0]?.candidate;
     expect(candidate?.revenue).toBeUndefined();
@@ -43,6 +50,7 @@ describe('fundamentals CSV preview', () => {
     const missingInterim = previewFundamentalsCsv(
       `${header}\nSYN-IAM,2025-06-30,,interim,,MAD,,,,,,,,,,,,,`,
       securities,
+      issuers,
       [],
     );
     expect(missingInterim.rows[0]?.errors.some((e) => e.includes('interim_period'))).toBe(true);
@@ -50,6 +58,7 @@ describe('fundamentals CSV preview', () => {
     const strayInterim = previewFundamentalsCsv(
       `${header}\nSYN-IAM,2025-12-31,,annual,H1,MAD,,,,,,,,,,,,,`,
       securities,
+      issuers,
       [],
     );
     expect(strayInterim.rows[0]?.errors.some((e) => e.includes('interim_period'))).toBe(true);
@@ -62,7 +71,7 @@ describe('fundamentals CSV preview', () => {
       'GHOST,2025-12-31,,annual,,MAD,1000,,,,,,,,,,,,',
       'SYN-ATW,not-a-date,,annual,,MAD,1000,,,,,,,,,,,,',
     ].join('\n');
-    const preview = previewFundamentalsCsv(csv, securities, []);
+    const preview = previewFundamentalsCsv(csv, securities, issuers, []);
     expect(preview.totals).toEqual({
       total: 3,
       valid: 1,
@@ -78,18 +87,19 @@ describe('fundamentals CSV preview', () => {
 
   it('rejects publication_date earlier than period_end_date', () => {
     const csv = `${header}\nSYN-IAM,2025-12-31,2025-01-01,annual,,MAD,,,,,,,,,,,,,`;
-    const preview = previewFundamentalsCsv(csv, securities, []);
+    const preview = previewFundamentalsCsv(csv, securities, issuers, []);
     expect(preview.rows[0]?.errors.some((e) => e.includes('publication_date'))).toBe(true);
   });
 
   it('rejects non-finite numeric values but accepts negative operating cash flow', () => {
     const csv = `${header}\nSYN-IAM,2025-12-31,,annual,,MAD,not-a-number,,,,,,,,,-40,,,`;
-    const preview = previewFundamentalsCsv(csv, securities, []);
+    const preview = previewFundamentalsCsv(csv, securities, issuers, []);
     expect(preview.rows[0]?.errors.some((e) => e.includes('invalid revenue'))).toBe(true);
 
     const negativeOcf = previewFundamentalsCsv(
       `${header}\nSYN-IAM,2025-12-31,,annual,,MAD,,,,,,,,,,-40,,,`,
       securities,
+      issuers,
       [],
     );
     expect(negativeOcf.rows[0]?.errors).toEqual([]);
@@ -100,6 +110,7 @@ describe('fundamentals CSV preview', () => {
     const preview = previewFundamentalsCsv(
       `${header}\nSYN-IAM,2025-12-31,,annual,,MAD,,,,,,,,,,,-5,-100,`,
       securities,
+      issuers,
       [],
     );
     expect(preview.rows[0]?.errors.some((e) => e.includes('capex cannot be negative'))).toBe(true);
@@ -114,15 +125,15 @@ describe('fundamentals CSV preview', () => {
       'SYN-IAM,2025-12-31,,annual,,MAD,1000,,,,,,,,,,,,',
       'SYN-IAM,2025-12-31,,annual,,MAD,1100,,,,,,,,,,,,',
     ].join('\n');
-    const preview = previewFundamentalsCsv(csv, securities, []);
+    const preview = previewFundamentalsCsv(csv, securities, issuers, []);
     expect(preview.rows[1]?.errors.some((e) => e.includes('duplicate'))).toBe(true);
     expect(preview.canConfirm).toBe(false);
   });
 
   it('warns (not errors) when a row already has data in the database', () => {
     const csv = `${header}\nSYN-IAM,2025-12-31,,annual,,MAD,1000,,,,,,,,,,,,`;
-    const preview = previewFundamentalsCsv(csv, securities, [
-      { security_id: 'sec-iam', period_type: 'annual', period_end_date: '2025-12-31' },
+    const preview = previewFundamentalsCsv(csv, securities, issuers, [
+      { issuer_id: 'issuer-iam', period_type: 'annual', period_end_date: '2025-12-31' },
     ]);
     expect(preview.rows[0]?.errors).toEqual([]);
     expect(preview.rows[0]?.warnings.some((w) => w.includes('will be updated'))).toBe(true);
@@ -139,7 +150,7 @@ describe('fundamentals CSV preview', () => {
 
   it('accepts the four optional DCF fields, including negative values', () => {
     const csv = `${header}\nSYN-IAM,2025-12-31,2026-02-15,annual,,MAD,1000,300,250,150,1.5,120,400,900,600,80,60,1000000,0,120,60,-30,-10`;
-    const preview = previewFundamentalsCsv(csv, securities, []);
+    const preview = previewFundamentalsCsv(csv, securities, issuers, []);
     expect(preview.canConfirm).toBe(true);
     const candidate = preview.rows[0]?.candidate;
     expect(candidate?.depreciationAmortization).toBe('120');
@@ -152,7 +163,7 @@ describe('fundamentals CSV preview', () => {
     const legacyHeader =
       'ticker,period_end_date,publication_date,period_type,interim_period,currency,revenue,ebitda,ebit,net_income,eps,cash,total_debt,total_assets,total_equity,operating_cash_flow,capex,shares_outstanding,dividend_per_share';
     const csv = `${legacyHeader}\nSYN-IAM,2025-12-31,,annual,,MAD,1000,,,,,,,,,,,,`;
-    const preview = previewFundamentalsCsv(csv, securities, []);
+    const preview = previewFundamentalsCsv(csv, securities, issuers, []);
     expect(preview.canConfirm).toBe(true);
     const candidate = preview.rows[0]?.candidate;
     expect(candidate?.revenue).toBe('1000');
@@ -163,12 +174,52 @@ describe('fundamentals CSV preview', () => {
   });
 
   it('rejects a malformed CSV file and an empty file', () => {
-    const malformed = previewFundamentalsCsv('"unterminated', securities, []);
+    const malformed = previewFundamentalsCsv('"unterminated', securities, issuers, []);
     expect(malformed.canConfirm).toBe(false);
     expect(malformed.rows[0]?.errors[0]).toContain('malformed');
 
-    const empty = previewFundamentalsCsv('', securities, []);
+    const empty = previewFundamentalsCsv('', securities, issuers, []);
     expect(empty.canConfirm).toBe(false);
     expect(empty.rows[0]?.errors[0]).toContain('empty');
+  });
+
+  describe('issuer resolution for issuers with no listed security', () => {
+    const issuerHeader =
+      'issuer_id,ammc_issuer_id,issuer_name,period_end_date,publication_date,period_type,interim_period,currency,revenue,ebitda,ebit,net_income,eps,cash,total_debt,total_assets,total_equity,operating_cash_flow,capex,shares_outstanding,dividend_per_share';
+
+    it('resolves directly via issuer_id', () => {
+      const csv = `${issuerHeader}\nissuer-ocp,,,2025-12-31,,annual,,MAD,1000,,,,,,,,,,,`;
+      const preview = previewFundamentalsCsv(csv, securities, issuers, []);
+      expect(preview.canConfirm).toBe(true);
+      expect(preview.rows[0]?.candidate?.issuerId).toBe('issuer-ocp');
+    });
+
+    it('resolves via ammc_issuer_id when issuer_id is not given', () => {
+      const csv = `${issuerHeader}\n,13927,,2025-12-31,,annual,,MAD,1000,,,,,,,,,,,`;
+      const preview = previewFundamentalsCsv(csv, securities, issuers, []);
+      expect(preview.canConfirm).toBe(true);
+      expect(preview.rows[0]?.candidate?.issuerId).toBe('issuer-ocp');
+    });
+
+    it('resolves via an exact-normalized issuer_name as a last resort', () => {
+      const csv = `${issuerHeader}\n,,OCP,2025-12-31,,annual,,MAD,1000,,,,,,,,,,,`;
+      const preview = previewFundamentalsCsv(csv, securities, issuers, []);
+      expect(preview.canConfirm).toBe(true);
+      expect(preview.rows[0]?.candidate?.issuerId).toBe('issuer-ocp');
+    });
+
+    it('never fuzzy-matches an unrecognized issuer_name', () => {
+      const csv = `${issuerHeader}\n,,Totally Unknown Company,2025-12-31,,annual,,MAD,1000,,,,,,,,,,,`;
+      const preview = previewFundamentalsCsv(csv, securities, issuers, []);
+      expect(preview.canConfirm).toBe(false);
+      expect(preview.rows[0]?.errors.some((e) => e.includes('unknown issuer_name'))).toBe(true);
+    });
+
+    it('rejects a row with no ticker, issuer_id, ammc_issuer_id, or issuer_name at all', () => {
+      const csv = `${issuerHeader}\n,,,2025-12-31,,annual,,MAD,1000,,,,,,,,,,,`;
+      const preview = previewFundamentalsCsv(csv, securities, issuers, []);
+      expect(preview.canConfirm).toBe(false);
+      expect(preview.rows[0]?.errors.some((e) => e.includes('missing ticker'))).toBe(true);
+    });
   });
 });

@@ -82,6 +82,7 @@ async function record(
 live.sequential('live PostgreSQL RLS and transaction matrix', () => {
   let adminClient: Client;
   let securityId: string;
+  let securityIssuerId: string;
 
   beforeAll(async () => {
     adminClient = await connect();
@@ -105,10 +106,11 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
         ids.reversalPortfolio,
       ],
     );
-    const result = await adminClient.query<{ id: string }>(
-      "select id from market.securities where ticker='SYN-IAM'",
+    const result = await adminClient.query<{ id: string; issuer_id: string }>(
+      "select id, issuer_id from market.securities where ticker='SYN-IAM'",
     );
     securityId = result.rows[0]!.id;
+    securityIssuerId = result.rows[0]!.issuer_id;
   });
 
   afterAll(async () => {
@@ -1075,18 +1077,21 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
          values($1::uuid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', $1::text || '@example.test', '', '{}', '{}', now(), now())`,
         [fundamentalsAdmin],
       );
-      await adminClient.query("insert into public.user_roles(user_id,role) values($1,'data_admin')", [
-        fundamentalsAdmin,
-      ]);
+      await adminClient.query(
+        "insert into public.user_roles(user_id,role) values($1,'data_admin')",
+        [fundamentalsAdmin],
+      );
     });
 
     afterAll(async () => {
-      await adminClient.query('delete from market.fundamentals where security_id=$1', [securityId]);
+      await adminClient.query('delete from market.fundamentals where issuer_id=$1', [
+        securityIssuerId,
+      ]);
     });
 
     function fundamentalsRow(overrides: Record<string, unknown> = {}) {
       return {
-        securityId,
+        issuerId: securityIssuerId,
         periodType: 'annual',
         interimPeriod: null,
         fiscalYear: 2024,
@@ -1154,17 +1159,17 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
       });
 
       const count = await adminClient.query<{ count: string }>(
-        'select count(*)::text count from market.fundamentals where security_id=$1 and period_end_date=$2',
-        [securityId, '2024-12-31'],
+        'select count(*)::text count from market.fundamentals where issuer_id=$1 and period_end_date=$2',
+        [securityIssuerId, '2024-12-31'],
       );
       expect(count.rows[0]!.count).toBe('1');
     });
 
-    it('rejects an unknown security via foreign key violation', async () => {
+    it('rejects an unknown issuer via foreign key violation', async () => {
       await expect(
         applyImport([
           fundamentalsRow({
-            securityId: randomUUID(),
+            issuerId: randomUUID(),
             periodEndDate: '2020-01-01',
             publicationDate: '2020-06-01',
           }),
@@ -1210,10 +1215,10 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
           ids.userA,
         ),
       ).rejects.toThrow(/FORBIDDEN/);
-      const listResult = await asUser<{ security_id: string }>(
+      const listResult = await asUser<{ issuer_id: string }>(
         ids.userA,
         'select * from public.list_fundamentals_periods($1::uuid[])',
-        [[securityId]],
+        [[securityIssuerId]],
       );
       expect(listResult.rows).toEqual([]);
     });
@@ -1258,7 +1263,10 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
           changeInWorkingCapital: undefined,
         }),
       ]);
-      const view = await asUser<{ depreciation_amortization: string | null; tax_expense: string | null }>(
+      const view = await asUser<{
+        depreciation_amortization: string | null;
+        tax_expense: string | null;
+      }>(
         null,
         'select depreciation_amortization,tax_expense from public.security_fundamentals where security_id=$1 and period_end_date=$2',
         [securityId, '2029-12-31'],
@@ -1342,7 +1350,9 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
     });
 
     it('quarantines a run that references an unknown ticker (invalid CSV), and still forbids publishing it', async () => {
-      const proposed = await propose(uploaderAdmin, [candidateRow({ ticker: 'NOT-A-REAL-TICKER' })]);
+      const proposed = await propose(uploaderAdmin, [
+        candidateRow({ ticker: 'NOT-A-REAL-TICKER' }),
+      ]);
       const runId = proposed.rows[0]!.propose_market_price_import;
       const status = await adminClient.query<{ status: string }>(
         'select status from market.ingestion_runs where id=$1',
@@ -1369,7 +1379,9 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
     });
 
     it('lets a distinct eligible data_admin publish, inserting published prices and marking the run published', async () => {
-      const proposed = await propose(uploaderAdmin, [candidateRow({ marketDate: '2031-03-19', close: '121.00' })]);
+      const proposed = await propose(uploaderAdmin, [
+        candidateRow({ marketDate: '2031-03-19', close: '121.00' }),
+      ]);
       const runId = proposed.rows[0]!.propose_market_price_import;
       const result = await asUser<{
         publish_market_price_import: { status: string; publishedRows: number };
@@ -1397,13 +1409,17 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
     });
 
     it('supersedes the prior published price when a later approved import covers the same security and date', async () => {
-      const first = await propose(uploaderAdmin, [candidateRow({ marketDate: '2031-03-21', close: '100.00' })]);
+      const first = await propose(uploaderAdmin, [
+        candidateRow({ marketDate: '2031-03-21', close: '100.00' }),
+      ]);
       const firstRunId = first.rows[0]!.propose_market_price_import;
       await asUser(reviewerAdmin, 'select public.publish_market_price_import($1,$2)', [
         firstRunId,
         'first publish',
       ]);
-      const second = await propose(uploaderAdmin, [candidateRow({ marketDate: '2031-03-21', close: '105.00' })]);
+      const second = await propose(uploaderAdmin, [
+        candidateRow({ marketDate: '2031-03-21', close: '105.00' }),
+      ]);
       const secondRunId = second.rows[0]!.propose_market_price_import;
       await asUser(reviewerAdmin, 'select public.publish_market_price_import($1,$2)', [
         secondRunId,
@@ -1446,7 +1462,7 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
 
       const updated = await asUser<{ assumptions: { wacc: number } }>(
         ids.userA,
-        "update public.dcf_scenarios set assumptions='{\"wacc\":0.11}'::jsonb where id=$1 returning assumptions",
+        'update public.dcf_scenarios set assumptions=\'{"wacc":0.11}\'::jsonb where id=$1 returning assumptions',
         [scenarioId],
       );
       expect(updated.rows[0]!.assumptions).toEqual({ wacc: 0.11 });
@@ -1460,9 +1476,11 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
       );
       const scenarioId = created.rows[0]!.id;
 
-      const foreignRead = await asUser(ids.userB, 'select id from public.dcf_scenarios where id=$1', [
-        scenarioId,
-      ]);
+      const foreignRead = await asUser(
+        ids.userB,
+        'select id from public.dcf_scenarios where id=$1',
+        [scenarioId],
+      );
       expect(foreignRead.rows).toEqual([]);
 
       const foreignUpdate = await asUser(

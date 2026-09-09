@@ -24,25 +24,19 @@ export async function POST(request: Request) {
     return jsonError('INVALID_JSON', 400);
   }
   const input = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
-  const issuerId = input.issuerId ? String(input.issuerId) : null;
-  const securityId = input.securityId ? String(input.securityId) : null;
-  const fiscalYear = Number(input.fiscalYear);
-  const title = String(input.title ?? '').trim();
-  const sourceUrl = String(input.sourceUrl ?? '').trim();
-  if ((!issuerId && !securityId) || !title || !sourceUrl || !Number.isInteger(fiscalYear)) {
-    return jsonError('MISSING_FIELDS', 400);
-  }
+  const name = String(input.name ?? '').trim();
+  if (!name) return jsonError('MISSING_NAME', 400);
 
-  const { data, error } = await supabase.rpc('upsert_company_document_manual', {
-    p_id: input.id ? String(input.id) : null,
-    p_issuer_id: issuerId,
-    p_security_id: securityId,
-    p_document_type: 'annual_report',
-    p_fiscal_year: fiscalYear,
-    p_title: title,
-    p_source_url: sourceUrl,
-    p_publication_date: input.publicationDate ? String(input.publicationDate) : null,
-    p_language: input.language ? String(input.language) : null,
+  const { data, error } = await supabase.rpc('create_issuer_manual', {
+    p_name: name,
+    p_issuer_type: input.issuerType ? String(input.issuerType) : null,
+    p_equity_listing_status: String(input.equityListingStatus ?? 'unknown'),
+    p_country_code: input.countryCode ? String(input.countryCode) : null,
+    p_country_name: input.countryName ? String(input.countryName) : null,
+    p_sector: input.sector ? String(input.sector) : null,
+    p_website: input.website ? String(input.website) : null,
+    p_ammc_issuer_id: input.ammcIssuerId ? String(input.ammcIssuerId) : null,
+    p_ammc_issuer_name: input.ammcIssuerName ? String(input.ammcIssuerName) : null,
   });
   if (error) return jsonError(error.message, 422);
   return Response.json({ id: data });

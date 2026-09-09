@@ -1,79 +1,79 @@
 import { normalizeAmmcIssuerName, type AmmcIssuerOption } from '@bvc/market-data/ammc-reports';
-import type { AliasRow, SecurityRef } from './types';
+import type { IssuerRef, NewIssuerDraft, ResolvedIssuer } from './types';
 
-export type MatchReason = 'alias' | 'exact_name' | 'ambiguous_name' | 'unmatched';
+/**
+ * Known foreign-parent markers AMMC appends to a cross-listed issuer's display name. Verified
+ * against the live issuer directory (see packages/market-data/src/__fixtures__/ammc-listing.html)
+ * -- France is, in practice, the only pattern actually observed there. Deliberately narrow: an
+ * unrecognized name is left issuer_type=null/country=null (unknown) rather than guessed, per
+ * "do not guess historical status if unknown".
+ */
+const FOREIGN_COUNTRY_MARKERS: Record<string, { code: string; name: string }> = {
+  FRANCE: { code: 'FR', name: 'France' },
+};
 
-export interface MatchResult {
-  securityId: string | null;
-  reason: MatchReason;
+const TRAILING_COUNTRY_RE = /\(\s*([A-Za-zÀ-ÿ]+)\s*\)\s*$/;
+
+export function detectForeignCountry(ammcName: string): { code: string; name: string } | null {
+  const match = TRAILING_COUNTRY_RE.exec(ammcName);
+  if (!match) return null;
+  const key = match[1]!.toUpperCase();
+  return FOREIGN_COUNTRY_MARKERS[key] ?? null;
 }
 
 /**
- * Deterministic issuer -> security resolution. Priority 1: an explicit, admin-maintained
- * alias (keyed by the AMMC issuer id, which never changes even if AMMC edits the display
- * name). Priority 2: an exact match on normalized issuer name, but ONLY when it resolves to
- * exactly one security -- two securities colliding on the same normalized name is treated the
- * same as no match at all, never resolved by guessing. There is no priority-3 identifier match
- * yet (AMMC's directory does not expose ISIN), so an issuer that clears neither priority stays
- * unmatched for admin review; it is never silently attached to a "close enough" candidate.
+ * Deterministic issuer resolution for one AMMC issuer directory entry. Priority 1: an issuer
+ * that already carries this exact ammc_issuer_id (market.issuers.ammc_issuer_id -- see
+ * docs/COMPANY_DOCUMENTS.md for why this folds the old alias-table concept into a direct
+ * column). Priority 2: exact normalized-name match against existing issuers, only when it
+ * resolves to exactly one -- a collision with more than one existing issuer is "ambiguous" and
+ * is never auto-resolved. Priority 3: no match at all -- draftNewIssuer() below describes how
+ * to create one; this function itself never creates anything, it only decides whether to.
  */
-export function resolveSecurityForIssuer(
-  issuer: AmmcIssuerOption,
-  aliases: readonly AliasRow[],
-  securities: readonly SecurityRef[],
-): MatchResult {
-  const alias = aliases.find((a) => a.sourceIssuerId === issuer.issuerId);
-  if (alias) return { securityId: alias.securityId, reason: 'alias' };
+export function resolveIssuer(
+  ammcIssuer: AmmcIssuerOption,
+  existingIssuers: readonly IssuerRef[],
+): ResolvedIssuer {
+  const byAmmcId = existingIssuers.find((i) => i.ammcIssuerId === ammcIssuer.issuerId);
+  if (byAmmcId) return { kind: 'existing', issuerId: byAmmcId.id };
 
-  const normalizedIssuer = normalizeAmmcIssuerName(issuer.issuerName);
-  const candidates = securities.filter(
-    (security) =>
-      security.issuerName !== null &&
-      normalizeAmmcIssuerName(security.issuerName) === normalizedIssuer,
-  );
-  if (candidates.length === 1) return { securityId: candidates[0]!.id, reason: 'exact_name' };
-  if (candidates.length > 1) return { securityId: null, reason: 'ambiguous_name' };
-  return { securityId: null, reason: 'unmatched' };
+  const normalized = normalizeAmmcIssuerName(ammcIssuer.issuerName);
+  const nameMatches = existingIssuers.filter((i) => i.normalizedName === normalized);
+  if (nameMatches.length === 1) return { kind: 'existing', issuerId: nameMatches[0]!.id };
+  if (nameMatches.length > 1) return { kind: 'ambiguous', issuerId: null };
+
+  return { kind: 'created', issuerId: null };
 }
 
-/** The reverse direction of resolveSecurityForIssuer -- used for --ticker scoped runs, which
- * start from a known security and need to find its AMMC issuer entry rather than the other
- * way around. Same two-priority rule, same refusal to guess on an ambiguous name. */
-export function resolveIssuerForSecurity(
-  security: SecurityRef,
-  aliases: readonly AliasRow[],
-  issuers: readonly AmmcIssuerOption[],
-): AmmcIssuerOption | null {
-  const alias = aliases.find((a) => a.securityId === security.id);
-  if (alias) {
-    return (
-      issuers.find((i) => i.issuerId === alias.sourceIssuerId) ?? {
-        issuerId: alias.sourceIssuerId,
-        issuerName: alias.sourceIssuerName,
-      }
-    );
-  }
-  if (!security.issuerName) return null;
-  const normalizedSecurity = normalizeAmmcIssuerName(security.issuerName);
-  const candidates = issuers.filter(
-    (i) => normalizeAmmcIssuerName(i.issuerName) === normalizedSecurity,
-  );
-  return candidates.length === 1 ? candidates[0]! : null;
-}
-
-/** Best-effort candidate to surface for admin review of an unmatched issuer -- informational
- * only, never auto-attached. */
-export function suggestCandidateSecurity(
-  issuer: AmmcIssuerOption,
-  securities: readonly SecurityRef[],
+/** Best-effort candidate to surface for admin review of an ambiguous issuer -- informational
+ * only, never auto-applied. */
+export function suggestCandidateIssuer(
+  ammcIssuer: AmmcIssuerOption,
+  existingIssuers: readonly IssuerRef[],
 ): string | null {
-  const normalizedIssuer = normalizeAmmcIssuerName(issuer.issuerName);
-  if (normalizedIssuer.length < 3) return null;
-  const partial = securities.find(
-    (security) =>
-      security.issuerName !== null &&
-      (normalizeAmmcIssuerName(security.issuerName).includes(normalizedIssuer) ||
-        normalizedIssuer.includes(normalizeAmmcIssuerName(security.issuerName))),
+  const normalized = normalizeAmmcIssuerName(ammcIssuer.issuerName);
+  if (normalized.length < 3) return null;
+  const partial = existingIssuers.find(
+    (i) => i.normalizedName.includes(normalized) || normalized.includes(i.normalizedName),
   );
   return partial?.id ?? null;
+}
+
+/** Shapes a brand-new issuer row for an AMMC issuer with no existing match at all. Country/
+ * foreign-issuer classification is a narrow, disclosed heuristic (see detectForeignCountry);
+ * anything not recognized stays 'unlisted_company'/'unknown' rather than guessed -- this is
+ * only ever reached from resolveIssuer's 'created' outcome, i.e. genuinely no existing issuer
+ * collided on either the AMMC id or the normalized name. */
+export function draftNewIssuer(ammcIssuer: AmmcIssuerOption): NewIssuerDraft {
+  const country = detectForeignCountry(ammcIssuer.issuerName);
+  return {
+    name: ammcIssuer.issuerName,
+    normalizedName: normalizeAmmcIssuerName(ammcIssuer.issuerName),
+    ammcIssuerId: ammcIssuer.issuerId,
+    ammcIssuerName: ammcIssuer.issuerName,
+    issuerType: country ? 'foreign_issuer' : 'unlisted_company',
+    equityListingStatus: 'no_listed_bvc_equity',
+    countryCode: country?.code ?? null,
+    countryName: country?.name ?? null,
+  };
 }

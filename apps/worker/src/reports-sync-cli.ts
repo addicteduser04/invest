@@ -40,18 +40,20 @@ export function parseReportsCliArgs(argv: string[]): SyncScope {
 function printSummary(summary: SyncSummary, log: (message: string) => void = console.log) {
   log('');
   log('Annual reports sync summary');
-  log(`  run id: ${summary.runId ?? '(dry run — not persisted)'}`);
+  log(`  run id: ${summary.runId ?? '(dry run - not persisted)'}`);
   log(`  status: ${summary.status}`);
-  log(`  discovered: ${summary.documentsDiscovered}, matched: ${summary.documentsMatched}`);
   log(
-    `  inserted: ${summary.documentsInserted}, updated: ${summary.documentsUpdated}, unchanged: ${summary.documentsUnchanged}`,
+    `  issuers discovered: ${summary.issuersDiscovered} (existing: ${summary.issuersExisting}, created: ${summary.issuersCreated}, ambiguous: ${summary.issuersAmbiguous})`,
   );
-  if (summary.unmatchedIssuers.length) {
-    log(`  unmatched issuers (${summary.unmatchedIssuers.length}):`);
-    for (const issuer of summary.unmatchedIssuers) {
-      log(`    ${issuer.sourceIssuerId} ${issuer.sourceIssuerName}`);
-    }
-  }
+  log(
+    `  issuers linked to a listed security: ${summary.issuersLinkedToSecurity}, unlisted: ${summary.issuersUnlisted}`,
+  );
+  log(
+    `  issuers with reports: ${summary.issuersWithReports}, without reports: ${summary.issuersWithoutReports}`,
+  );
+  log(
+    `  documents discovered: ${summary.documentsDiscovered} (inserted: ${summary.documentsInserted}, updated: ${summary.documentsUpdated}, unchanged: ${summary.documentsUnchanged})`,
+  );
   if (summary.failures.length) {
     log(`  failures (${summary.failures.length}):`);
     for (const failure of summary.failures) {

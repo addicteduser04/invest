@@ -185,4 +185,13 @@ describe('normalizeAmmcIssuerName', () => {
   it('does not collapse two genuinely different issuers to the same key', () => {
     expect(normalizeAmmcIssuerName('HOLCIM')).not.toBe(normalizeAmmcIssuerName('HOLCIM MAROC'));
   });
+
+  it('strips a trailing "(ex ...)" former-name parenthetical so it does not block a match', () => {
+    expect(normalizeAmmcIssuerName('MED PAPER (ex Papelera de Tetuan)')).toBe(
+      normalizeAmmcIssuerName('MED PAPER'),
+    );
+    expect(normalizeAmmcIssuerName('Taqa Morocco (ex JLEC)')).toBe(
+      normalizeAmmcIssuerName('TAQA MOROCCO'),
+    );
+  });
 });

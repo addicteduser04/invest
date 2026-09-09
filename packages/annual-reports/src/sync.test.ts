@@ -2,24 +2,29 @@ import { describe, expect, it } from 'vitest';
 import { syncAnnualReports } from './sync';
 import type { ReportsStore } from './store';
 import type {
-  AliasRow,
+  AmbiguousIssuer,
   DiscoveredDocument,
   DocumentUpsertCounts,
+  IssuerRef,
+  NewIssuerDraft,
   SecurityRef,
+  SyncCounters,
   SyncFailure,
   SyncScope,
   SyncStatus,
-  UnmatchedIssuer,
 } from './types';
 
 class FakeReportsStore implements ReportsStore {
   documents = new Map<string, DiscoveredDocument>();
-  unmatched = new Map<string, UnmatchedIssuer>();
-  runs: Array<{ scope: SyncScope; status?: SyncStatus }> = [];
+  ambiguous = new Map<string, AmbiguousIssuer>();
+  createdIssuers: NewIssuerDraft[] = [];
+  backfills: Array<{ issuerId: string; ammcIssuerId: string }> = [];
+  runs: Array<{ scope: SyncScope; status?: SyncStatus; counters?: SyncCounters }> = [];
+  private issuerSeq = 0;
 
   constructor(
     private readonly securities: SecurityRef[],
-    private readonly aliases: AliasRow[] = [],
+    private issuers: IssuerRef[] = [],
   ) {}
 
   async ensureSystemActor() {
@@ -28,37 +33,57 @@ class FakeReportsStore implements ReportsStore {
   async listActiveSecurities() {
     return this.securities;
   }
-  async listAliases() {
-    return this.aliases;
+  async listExistingIssuers() {
+    return this.issuers.map((i) => ({ ...i }));
+  }
+  async createIssuer(draft: NewIssuerDraft) {
+    this.issuerSeq += 1;
+    const id = `created-issuer-${this.issuerSeq}`;
+    this.createdIssuers.push(draft);
+    this.issuers.push({
+      id,
+      name: draft.name,
+      normalizedName: draft.normalizedName,
+      ammcIssuerId: draft.ammcIssuerId,
+      hasListedSecurity: false,
+    });
+    return id;
+  }
+  async backfillIssuerAmmcId(issuerId: string, ammcIssuerId: string) {
+    this.backfills.push({ issuerId, ammcIssuerId });
+    const issuer = this.issuers.find((i) => i.id === issuerId);
+    if (issuer) issuer.ammcIssuerId = ammcIssuerId;
   }
   async createRun(input: { scope: SyncScope; createdBy: string }) {
     const id = `run-${this.runs.length + 1}`;
     this.runs.push({ scope: input.scope });
     return id;
   }
-  async finalizeRun(runId: string, input: { status: SyncStatus }) {
+  async finalizeRun(runId: string, input: { status: SyncStatus; counters: SyncCounters }) {
     const run = this.runs.find((_, index) => `run-${index + 1}` === runId);
-    if (run) run.status = input.status;
+    if (run) {
+      run.status = input.status;
+      run.counters = input.counters;
+    }
   }
   async upsertDocuments(documents: DiscoveredDocument[]): Promise<DocumentUpsertCounts> {
+    // Mirrors the real DB identity (source_provider_id,source_record_url,source_url): two
+    // documents only collide here when both the filing record AND the asset URL match.
     let inserted = 0;
     let updated = 0;
     let unchanged = 0;
     for (const doc of documents) {
-      const existing = this.documents.get(doc.sourceUrl);
-      if (!existing) {
-        inserted += 1;
-      } else if (JSON.stringify(existing) === JSON.stringify(doc)) {
-        unchanged += 1;
-      } else {
-        updated += 1;
-      }
-      this.documents.set(doc.sourceUrl, doc);
+      const key = `${doc.sourceRecordUrl}::${doc.sourceUrl}`;
+      const existing = this.documents.get(key);
+      if (!existing) inserted += 1;
+      else if (JSON.stringify(existing) === JSON.stringify(doc)) unchanged += 1;
+      else updated += 1;
+      this.documents.set(key, doc);
     }
     return { inserted, updated, unchanged };
   }
-  async upsertUnmatchedIssuers(unmatched: UnmatchedIssuer[]) {
-    for (const issuer of unmatched) this.unmatched.set(issuer.sourceIssuerId, issuer);
+  async upsertAmbiguousIssuers(ambiguous: AmbiguousIssuer[]) {
+    for (const issuer of ambiguous) this.ambiguous.set(issuer.sourceIssuerId, issuer);
   }
   async close() {}
 }
@@ -98,12 +123,14 @@ function detailHtml(input: {
     </table></article></body></html>`;
 }
 
-const iam: SecurityRef = { id: 'sec-iam', ticker: 'IAM', issuerName: 'ITISSALAT AL-MAGHRIB' };
-const iamAlias: AliasRow = {
-  securityId: 'sec-iam',
-  sourceIssuerId: '2798',
-  sourceIssuerName: 'MAROC TELECOM',
+const iamIssuer: IssuerRef = {
+  id: 'issuer-iam',
+  name: 'ITISSALAT AL-MAGHRIB',
+  normalizedName: 'ITISSALAT AL MAGHRIB',
+  ammcIssuerId: '2798',
+  hasListedSecurity: true,
 };
+const iamSecurity: SecurityRef = { id: 'sec-iam', ticker: 'IAM', issuerId: 'issuer-iam' };
 
 function fakeFetch(
   routes: Record<string, { status?: number; body: string; headers?: Record<string, string> }>,
@@ -111,7 +138,18 @@ function fakeFetch(
   return async (url: string, init?: RequestInit): Promise<Response> => {
     const path = url.replace('https://www.ammc.ma', '');
     const route = routes[path];
-    if (!route) return new Response('', { status: 404 });
+    if (!route) {
+      // Matches real AMMC behavior (verified live): a listing page past the end of an issuer's
+      // history returns HTTP 200 with an empty table, not a 404 -- so a test fixture only needs
+      // to define page 0 for a single-page issuer; pagination terminates naturally here exactly
+      // as it does against the real site. Any other unmapped route (issuer directory, detail
+      // page, attachment) still 404s, since those ARE meant to simulate a genuine fetch failure
+      // in some tests.
+      if (/\/fr\/liste-etats-financiers-emetteurs\?.*[?&]page=\d+/.test(path)) {
+        return new Response(listingHtml([]), { status: 200 });
+      }
+      return new Response('', { status: 404 });
+    }
     if (init?.method === 'HEAD') {
       return new Response(null, {
         status: route.status ?? 200,
@@ -122,18 +160,178 @@ function fakeFetch(
   };
 }
 
+const mtRoutes = {
+  '/fr/liste-etats-financiers-emetteurs': { body: ISSUER_DIRECTORY_HTML },
+  '/fr/liste-etats-financiers-emetteurs?field_emetteur_target_id_verf=2798': {
+    body: listingHtml([
+      { slug: 'maroc-telecom-rfa-2024', year: '2024', typeLabel: 'Rapports annuels' },
+    ]),
+  },
+  '/fr/espace-emetteurs/etats-financiers/maroc-telecom-rfa-2024': {
+    body: detailHtml({
+      issuer: 'MAROC TELECOM',
+      year: '2024',
+      typeLabel: 'Rapports annuels',
+      fileName: 'MT_RFA_2024.pdf',
+    }),
+  },
+  '/sites/default/files/MT_RFA_2024.pdf': { body: '' },
+};
+
 describe('syncAnnualReports', () => {
   const scope = (overrides: Partial<SyncScope> = {}): SyncScope => ({
     dryRun: false,
     ...overrides,
   });
 
-  it('first import: discovers and inserts one annual report for the aliased security', async () => {
-    const store = new FakeReportsStore([iam], [iamAlias]);
-    const fetchImpl = fakeFetch({
+  it('first import: discovers and inserts one annual report for an already-linked issuer', async () => {
+    const store = new FakeReportsStore([iamSecurity], [iamIssuer]);
+    const summary = await syncAnnualReports(scope({ ticker: 'IAM' }), store, {
+      fetchImpl: fakeFetch(mtRoutes),
+      delayMs: 0,
+    });
+
+    expect(summary.status).toBe('completed');
+    expect(summary.issuersExisting).toBe(1);
+    expect(summary.issuersCreated).toBe(0);
+    expect(summary.issuersLinkedToSecurity).toBe(1);
+    expect(summary.issuersUnlisted).toBe(0);
+    expect(summary.issuersWithReports).toBe(1);
+    expect(summary.documentsInserted).toBe(1);
+    const doc = [...store.documents.values()][0]!;
+    expect(doc.issuerId).toBe('issuer-iam');
+    expect(doc.status).toBe('published');
+  });
+
+  it('creates a new unlisted issuer for an AMMC entry with no existing match -- not an error', async () => {
+    const store = new FakeReportsStore([iamSecurity], [iamIssuer]);
+    const summary = await syncAnnualReports(scope(), store, {
+      fetchImpl: fakeFetch(mtRoutes),
+      delayMs: 0,
+    });
+
+    expect(summary.issuersCreated).toBe(1);
+    expect(summary.issuersUnlisted).toBe(1);
+    expect(summary.issuersWithoutReports).toBe(1); // the unrelated French company has no listing route -> HTTP 404 -> failure, still counted as "without reports"
+    expect(store.createdIssuers).toHaveLength(1);
+    expect(store.createdIssuers[0]!.name).toBe('SOME UNRELATED FRENCH COMPANY');
+    expect(store.createdIssuers[0]!.equityListingStatus).toBe('no_listed_bvc_equity');
+  });
+
+  it('an identical rerun is idempotent: same document counts as unchanged, and no duplicate issuer is created', async () => {
+    const store = new FakeReportsStore([iamSecurity], [iamIssuer]);
+    const fetchImpl = fakeFetch(mtRoutes);
+    await syncAnnualReports(scope(), store, { fetchImpl, delayMs: 0 });
+    const second = await syncAnnualReports(scope(), store, { fetchImpl, delayMs: 0 });
+
+    expect(second.documentsInserted).toBe(0);
+    expect(second.documentsUnchanged).toBe(1);
+    expect(store.documents.size).toBe(1);
+    // The issuer created on the first run must be found via ammc_issuer_id on the second --
+    // never re-created.
+    expect(second.issuersCreated).toBe(0);
+    expect(second.issuersExisting).toBe(2);
+    expect(store.createdIssuers).toHaveLength(1);
+  });
+
+  it('persists two distinct filings that happen to share one PDF attachment URL, not just one (real Meditelecom case)', async () => {
+    // A FILE is not a FILING: AMMC can genuinely list two different filing records (different
+    // detail pages, different fiscal years) that both attach the identical PDF -- observed live
+    // for Meditelecom's 2015 and 2017 "Rapports sociaux annuels". Identity is
+    // (source_record_url,source_url), not source_url alone, so both must persist as separate
+    // rows -- collapsing them into one would silently lose a real filing.
+    const store = new FakeReportsStore([iamSecurity], [iamIssuer]);
+    const routes = {
       '/fr/liste-etats-financiers-emetteurs': { body: ISSUER_DIRECTORY_HTML },
       '/fr/liste-etats-financiers-emetteurs?field_emetteur_target_id_verf=2798': {
         body: listingHtml([
+          { slug: 'maroc-telecom-rsa-2017', year: '2017', typeLabel: 'Rapports annuels' },
+          { slug: 'maroc-telecom-rsa-2015', year: '2015', typeLabel: 'Rapports annuels' },
+        ]),
+      },
+      '/fr/espace-emetteurs/etats-financiers/maroc-telecom-rsa-2017': {
+        body: detailHtml({
+          issuer: 'MAROC TELECOM',
+          year: '2017',
+          typeLabel: 'Rapports annuels',
+          fileName: 'SHARED.pdf',
+        }),
+      },
+      '/fr/espace-emetteurs/etats-financiers/maroc-telecom-rsa-2015': {
+        body: detailHtml({
+          issuer: 'MAROC TELECOM',
+          year: '2015',
+          typeLabel: 'Rapports annuels',
+          fileName: 'SHARED.pdf',
+        }),
+      },
+      '/sites/default/files/SHARED.pdf': { body: '' },
+    };
+    const summary = await syncAnnualReports(scope({ ticker: 'IAM' }), store, {
+      fetchImpl: fakeFetch(routes),
+      delayMs: 0,
+    });
+
+    expect(summary.status).toBe('completed');
+    expect(summary.documentsDiscovered).toBe(2);
+    expect(summary.documentsInserted).toBe(2);
+    expect(store.documents.size).toBe(2);
+    expect(
+      summary.failures.filter((f: SyncFailure) => f.stage === 'document_duplicate'),
+    ).toHaveLength(0);
+    const years = [...store.documents.values()].map((d) => d.fiscalYear).sort();
+    expect(years).toEqual([2015, 2017]);
+  });
+
+  it('persists two distinct annual filings for the same issuer and fiscal year (e.g. consolidated + social)', async () => {
+    const store = new FakeReportsStore([iamSecurity], [iamIssuer]);
+    const routes = {
+      '/fr/liste-etats-financiers-emetteurs': { body: ISSUER_DIRECTORY_HTML },
+      '/fr/liste-etats-financiers-emetteurs?field_emetteur_target_id_verf=2798': {
+        body: listingHtml([
+          { slug: 'maroc-telecom-consolide-2024', year: '2024', typeLabel: 'Rapports annuels' },
+          { slug: 'maroc-telecom-social-2024', year: '2024', typeLabel: 'Rapports annuels' },
+        ]),
+      },
+      '/fr/espace-emetteurs/etats-financiers/maroc-telecom-consolide-2024': {
+        body: detailHtml({
+          issuer: 'MAROC TELECOM',
+          year: '2024',
+          typeLabel: 'Rapports annuels consolidés',
+          fileName: 'MT_CONSOLIDE_2024.pdf',
+        }),
+      },
+      '/fr/espace-emetteurs/etats-financiers/maroc-telecom-social-2024': {
+        body: detailHtml({
+          issuer: 'MAROC TELECOM',
+          year: '2024',
+          typeLabel: 'Rapports annuels sociaux',
+          fileName: 'MT_SOCIAL_2024.pdf',
+        }),
+      },
+    };
+    const summary = await syncAnnualReports(scope({ ticker: 'IAM' }), store, {
+      fetchImpl: fakeFetch(routes),
+      delayMs: 0,
+    });
+
+    expect(summary.documentsInserted).toBe(2);
+    expect(store.documents.size).toBe(2);
+    const fileNames = [...store.documents.values()].map((d) => d.fileName).sort();
+    expect(fileNames).toEqual(['MT_CONSOLIDE_2024.pdf', 'MT_SOCIAL_2024.pdf']);
+  });
+
+  it('collapses a true duplicate -- the identical filing record and asset discovered twice -- to one row without crashing', async () => {
+    // A genuine duplicate: the very same AMMC listing row surfaces twice (e.g. a
+    // listing/pagination overlap), so both discovered documents share the exact same
+    // (source_record_url,source_url) pair. This must dedupe to one persisted row and keep the
+    // run "completed", never a Postgres ON CONFLICT cardinality error.
+    const store = new FakeReportsStore([iamSecurity], [iamIssuer]);
+    const routes = {
+      '/fr/liste-etats-financiers-emetteurs': { body: ISSUER_DIRECTORY_HTML },
+      '/fr/liste-etats-financiers-emetteurs?field_emetteur_target_id_verf=2798': {
+        body: listingHtml([
+          { slug: 'maroc-telecom-rfa-2024', year: '2024', typeLabel: 'Rapports annuels' },
           { slug: 'maroc-telecom-rfa-2024', year: '2024', typeLabel: 'Rapports annuels' },
         ]),
       },
@@ -146,50 +344,28 @@ describe('syncAnnualReports', () => {
         }),
       },
       '/sites/default/files/MT_RFA_2024.pdf': { body: '' },
+    };
+    const summary = await syncAnnualReports(scope({ ticker: 'IAM' }), store, {
+      fetchImpl: fakeFetch(routes),
+      delayMs: 0,
     });
-
-    const summary = await syncAnnualReports(scope(), store, { fetchImpl, delayMs: 0 });
 
     expect(summary.status).toBe('completed');
+    expect(summary.documentsDiscovered).toBe(2);
     expect(summary.documentsInserted).toBe(1);
-    expect(summary.documentsUpdated).toBe(0);
     expect(store.documents.size).toBe(1);
-    const doc = [...store.documents.values()][0]!;
-    expect(doc.securityId).toBe('sec-iam');
-    expect(doc.fiscalYear).toBe(2024);
-    expect(doc.status).toBe('published');
-    expect(doc.fileSizeBytes).toBe(123456);
+    expect(
+      summary.failures.some(
+        (f: SyncFailure) =>
+          f.stage === 'document_duplicate' && f.message.includes('TRUE_DUPLICATE_FILING'),
+      ),
+    ).toBe(true);
   });
 
-  it('an identical rerun is idempotent: same document counts as unchanged, not re-inserted', async () => {
-    const store = new FakeReportsStore([iam], [iamAlias]);
-    const fetchImpl = fakeFetch({
-      '/fr/liste-etats-financiers-emetteurs': { body: ISSUER_DIRECTORY_HTML },
-      '/fr/liste-etats-financiers-emetteurs?field_emetteur_target_id_verf=2798': {
-        body: listingHtml([
-          { slug: 'maroc-telecom-rfa-2024', year: '2024', typeLabel: 'Rapports annuels' },
-        ]),
-      },
-      '/fr/espace-emetteurs/etats-financiers/maroc-telecom-rfa-2024': {
-        body: detailHtml({
-          issuer: 'MAROC TELECOM',
-          year: '2024',
-          typeLabel: 'Rapports annuels',
-          fileName: 'MT_RFA_2024.pdf',
-        }),
-      },
-    });
-
-    await syncAnnualReports(scope(), store, { fetchImpl, delayMs: 0 });
-    const second = await syncAnnualReports(scope(), store, { fetchImpl, delayMs: 0 });
-
-    expect(second.documentsInserted).toBe(0);
-    expect(second.documentsUnchanged).toBe(1);
-    expect(store.documents.size).toBe(1);
-  });
-
-  it('a changed attachment (e.g. new file size) is recorded as an update, not a duplicate', async () => {
-    const store = new FakeReportsStore([iam], [iamAlias]);
+  it("follows an issuer's listing pagination instead of stopping after page 0", async () => {
+    // A listed issuer with many years of history spans more than one listing page; page 0
+    // being non-empty must not stop the crawl short of the older filings on later pages.
+    const store = new FakeReportsStore([iamSecurity], [iamIssuer]);
     const routes = {
       '/fr/liste-etats-financiers-emetteurs': { body: ISSUER_DIRECTORY_HTML },
       '/fr/liste-etats-financiers-emetteurs?field_emetteur_target_id_verf=2798': {
@@ -197,6 +373,14 @@ describe('syncAnnualReports', () => {
           { slug: 'maroc-telecom-rfa-2024', year: '2024', typeLabel: 'Rapports annuels' },
         ]),
       },
+      '/fr/liste-etats-financiers-emetteurs?field_emetteur_target_id_verf=2798&page=1': {
+        body: listingHtml([
+          { slug: 'maroc-telecom-rfa-2015', year: '2015', typeLabel: 'Rapports annuels' },
+        ]),
+      },
+      '/fr/liste-etats-financiers-emetteurs?field_emetteur_target_id_verf=2798&page=2': {
+        body: listingHtml([]),
+      },
       '/fr/espace-emetteurs/etats-financiers/maroc-telecom-rfa-2024': {
         body: detailHtml({
           issuer: 'MAROC TELECOM',
@@ -205,86 +389,87 @@ describe('syncAnnualReports', () => {
           fileName: 'MT_RFA_2024.pdf',
         }),
       },
+      '/fr/espace-emetteurs/etats-financiers/maroc-telecom-rfa-2015': {
+        body: detailHtml({
+          issuer: 'MAROC TELECOM',
+          year: '2015',
+          typeLabel: 'Rapports annuels',
+          fileName: 'MT_RFA_2015.pdf',
+        }),
+      },
     };
-    await syncAnnualReports(scope(), store, { fetchImpl: fakeFetch(routes), delayMs: 0 });
-
-    const updatedRoutes = {
-      ...routes,
-      '/sites/default/files/MT_RFA_2024.pdf': { body: '', headers: { 'content-length': '999' } },
-    };
-    const fetchWithNewSize = async (url: string, init?: RequestInit) => {
-      if (init?.method === 'HEAD')
-        return new Response(null, { status: 200, headers: { 'content-length': '999' } });
-      return fakeFetch(routes)(url, init);
-    };
-    const second = await syncAnnualReports(scope(), store, {
-      fetchImpl: fetchWithNewSize,
+    const summary = await syncAnnualReports(scope({ ticker: 'IAM' }), store, {
+      fetchImpl: fakeFetch(routes),
       delayMs: 0,
     });
 
-    expect(second.documentsUpdated).toBe(1);
-    expect(second.documentsInserted).toBe(0);
-    expect([...store.documents.values()][0]!.fileSizeBytes).toBe(999);
+    expect(summary.documentsInserted).toBe(2);
+    const years = [...store.documents.values()].map((d) => d.fiscalYear).sort();
+    expect(years).toEqual([2015, 2024]);
   });
 
-  it('dry run discovers documents but never persists anything', async () => {
-    const store = new FakeReportsStore([iam], [iamAlias]);
-    const fetchImpl = fakeFetch({
-      '/fr/liste-etats-financiers-emetteurs': { body: ISSUER_DIRECTORY_HTML },
-      '/fr/liste-etats-financiers-emetteurs?field_emetteur_target_id_verf=2798': {
-        body: listingHtml([
-          { slug: 'maroc-telecom-rfa-2024', year: '2024', typeLabel: 'Rapports annuels' },
-        ]),
-      },
-      '/fr/espace-emetteurs/etats-financiers/maroc-telecom-rfa-2024': {
-        body: detailHtml({
-          issuer: 'MAROC TELECOM',
-          year: '2024',
-          typeLabel: 'Rapports annuels',
-          fileName: 'MT_RFA_2024.pdf',
-        }),
-      },
-    });
-
+  it('dry run discovers and classifies but never persists anything', async () => {
+    const store = new FakeReportsStore([iamSecurity], [iamIssuer]);
     const summary = await syncAnnualReports(scope({ dryRun: true }), store, {
-      fetchImpl,
+      fetchImpl: fakeFetch(mtRoutes),
       delayMs: 0,
     });
 
     expect(summary.runId).toBeNull();
-    expect(summary.documentsMatched).toBe(1);
+    expect(summary.issuersCreated).toBe(1);
+    expect(summary.documentsDiscovered).toBe(1);
+    expect(summary.documentsInserted).toBe(0);
     expect(store.documents.size).toBe(0);
-    expect(store.runs.length).toBe(0);
+    expect(store.createdIssuers).toHaveLength(0);
+    expect(store.runs).toHaveLength(0);
   });
 
-  it('surfaces an AMMC issuer with no matching security as unmatched, with a null candidate when nothing plausible overlaps', async () => {
-    const store = new FakeReportsStore([iam], [iamAlias]);
-    const fetchImpl = fakeFetch({
-      '/fr/liste-etats-financiers-emetteurs': { body: ISSUER_DIRECTORY_HTML },
-    });
-
-    const summary = await syncAnnualReports(scope(), store, { fetchImpl, delayMs: 0 });
-
-    expect(summary.unmatchedIssuers).toEqual([
+  it('surfaces a genuine name collision as ambiguous, never guessing which issuer it is', async () => {
+    const dupeIssuers: IssuerRef[] = [
       {
-        sourceIssuerId: '9999',
-        sourceIssuerName: 'SOME UNRELATED FRENCH COMPANY',
-        candidateSecurityId: null,
+        id: 'a',
+        name: 'MAROC TELECOM',
+        normalizedName: 'MAROC TELECOM',
+        ammcIssuerId: null,
+        hasListedSecurity: false,
       },
-    ]);
-    expect(store.unmatched.has('9999')).toBe(true);
-  });
-
-  it('a --ticker run for a security with no resolvable AMMC issuer fails clearly instead of guessing', async () => {
-    const store = new FakeReportsStore([
-      { id: 'sec-x', ticker: 'ZZZ', issuerName: 'TOTALLY UNRELATED NAME' },
-    ]);
-    const fetchImpl = fakeFetch({
-      '/fr/liste-etats-financiers-emetteurs': { body: ISSUER_DIRECTORY_HTML },
+      {
+        id: 'b',
+        name: 'Maroc Telecom',
+        normalizedName: 'MAROC TELECOM',
+        ammcIssuerId: null,
+        hasListedSecurity: false,
+      },
+    ];
+    const store = new FakeReportsStore([], dupeIssuers);
+    const summary = await syncAnnualReports(scope(), store, {
+      fetchImpl: fakeFetch({
+        '/fr/liste-etats-financiers-emetteurs': { body: ISSUER_DIRECTORY_HTML },
+      }),
+      delayMs: 0,
     });
 
+    expect(summary.issuersAmbiguous).toBeGreaterThanOrEqual(1);
+    expect(store.ambiguous.has('2798')).toBe(true);
+    expect(store.createdIssuers.some((d) => d.ammcIssuerId === '2798')).toBe(false);
+  });
+
+  it('a --ticker run for a security whose issuer has no resolvable AMMC entry fails clearly', async () => {
+    const orphanIssuer: IssuerRef = {
+      id: 'issuer-zzz',
+      name: 'TOTALLY UNRELATED NAME',
+      normalizedName: 'TOTALLY UNRELATED NAME',
+      ammcIssuerId: null,
+      hasListedSecurity: true,
+    };
+    const store = new FakeReportsStore(
+      [{ id: 'sec-zzz', ticker: 'ZZZ', issuerId: 'issuer-zzz' }],
+      [orphanIssuer],
+    );
     const summary = await syncAnnualReports(scope({ ticker: 'ZZZ' }), store, {
-      fetchImpl,
+      fetchImpl: fakeFetch({
+        '/fr/liste-etats-financiers-emetteurs': { body: ISSUER_DIRECTORY_HTML },
+      }),
       delayMs: 0,
     });
 
@@ -292,37 +477,28 @@ describe('syncAnnualReports', () => {
     expect(summary.failures.some((f: SyncFailure) => f.stage === 'resolve_ticker')).toBe(true);
   });
 
-  it('a single failing detail-page fetch does not abort the rest of the run (partial failure)', async () => {
-    const store = new FakeReportsStore([iam], [iamAlias]);
-    const fetchImpl = fakeFetch({
+  it('a validly-resolved issuer with zero reports is counted as issuersWithoutReports, not a failure', async () => {
+    const store = new FakeReportsStore([iamSecurity], [iamIssuer]);
+    const routes = {
       '/fr/liste-etats-financiers-emetteurs': { body: ISSUER_DIRECTORY_HTML },
       '/fr/liste-etats-financiers-emetteurs?field_emetteur_target_id_verf=2798': {
-        body: listingHtml([
-          { slug: 'maroc-telecom-rfa-2023', year: '2023', typeLabel: 'Rapports annuels' },
-          { slug: 'maroc-telecom-rfa-2024', year: '2024', typeLabel: 'Rapports annuels' },
-        ]),
+        body: listingHtml([]),
       },
-      '/fr/espace-emetteurs/etats-financiers/maroc-telecom-rfa-2023': { status: 500, body: '' },
-      '/fr/espace-emetteurs/etats-financiers/maroc-telecom-rfa-2024': {
-        body: detailHtml({
-          issuer: 'MAROC TELECOM',
-          year: '2024',
-          typeLabel: 'Rapports annuels',
-          fileName: 'MT_RFA_2024.pdf',
-        }),
-      },
+    };
+    const summary = await syncAnnualReports(scope({ ticker: 'IAM' }), store, {
+      fetchImpl: fakeFetch(routes),
+      delayMs: 0,
     });
 
-    const summary = await syncAnnualReports(scope(), store, { fetchImpl, delayMs: 0 });
-
-    expect(summary.documentsInserted).toBe(1);
-    expect(summary.failures.some((f: SyncFailure) => f.stage === 'detail_fetch')).toBe(true);
-    expect(summary.status).toBe('completed');
+    expect(summary.issuersWithoutReports).toBe(1);
+    expect(summary.failures.filter((f: SyncFailure) => f.context === iamIssuer.name)).toHaveLength(
+      0,
+    );
   });
 
   it('excludes half-year rows and only keeps the requested fiscal year when --year is set', async () => {
-    const store = new FakeReportsStore([iam], [iamAlias]);
-    const fetchImpl = fakeFetch({
+    const store = new FakeReportsStore([iamSecurity], [iamIssuer]);
+    const routes = {
       '/fr/liste-etats-financiers-emetteurs': { body: ISSUER_DIRECTORY_HTML },
       '/fr/liste-etats-financiers-emetteurs?field_emetteur_target_id_verf=2798': {
         body: listingHtml([
@@ -339,10 +515,9 @@ describe('syncAnnualReports', () => {
           fileName: 'MT_RFA_2024.pdf',
         }),
       },
-    });
-
+    };
     const summary = await syncAnnualReports(scope({ year: 2024 }), store, {
-      fetchImpl,
+      fetchImpl: fakeFetch(routes),
       delayMs: 0,
     });
 

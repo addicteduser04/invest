@@ -1,21 +1,31 @@
 import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { parse } from 'csv-parse/sync';
+import { normalizeAmmcIssuerName } from './ammc-reports';
 
 export interface KnownSecurity {
   id: string;
   ticker: string;
+  issuerId: string;
+}
+
+export interface KnownIssuer {
+  id: string;
+  name: string;
+  ammcIssuerId: string | null;
 }
 
 export interface ExistingFundamentalsPeriod {
-  security_id: string;
+  issuer_id: string;
   period_type: 'annual' | 'interim';
   period_end_date: string;
 }
 
 export interface FundamentalsCandidate {
-  securityId: string;
-  ticker: string;
+  issuerId: string;
+  /** Present only when resolved via the ticker column -- informational, not used for
+   * persistence (market.fundamentals is issuer-owned; see docs/COMPANY_DOCUMENTS.md). */
+  ticker?: string;
   periodType: 'annual' | 'interim';
   interimPeriod: 'H1' | 'H2' | null;
   fiscalYear: number;
@@ -106,20 +116,77 @@ const nonNegativeDecimal = (
 const emptyTotals = { total: 0, valid: 0, invalid: 0, warnings: 0, willInsert: 0, willUpdate: 0 };
 
 /**
- * Parse an admin-supplied fundamentals CSV: one row per company/period, blanks stay null
+ * Resolves a CSV row's issuer, in order (see docs/COMPANY_DOCUMENTS.md section "Fundamentals
+ * admin import"): (1) an explicit issuer_id column -- trusted as-is if it names a known issuer;
+ * (2) ticker -> known security -> its issuer_id, preserving the original ticker-only CSV
+ * contract; (3) ammc_issuer_id -> a known issuer carrying that id; (4) issuer_name, matched only
+ * on an EXACT normalized-name hit against exactly one known issuer -- never fuzzy. Returns null
+ * (never guesses) when nothing resolves.
+ */
+function resolveIssuerId(
+  record: Record<string, string>,
+  tickerToSecurity: Map<string, KnownSecurity>,
+  issuerById: Map<string, KnownIssuer>,
+  issuerByAmmcId: Map<string, KnownIssuer>,
+  issuersByNormalizedName: Map<string, KnownIssuer[]>,
+): { issuerId: string | null; ticker: string | undefined; error: string | null } {
+  const explicitIssuerId = String(record['issuer_id'] ?? '').trim();
+  if (explicitIssuerId) {
+    if (!issuerById.has(explicitIssuerId))
+      return { issuerId: null, ticker: undefined, error: 'unknown issuer_id' };
+    return { issuerId: explicitIssuerId, ticker: undefined, error: null };
+  }
+
+  const ticker = String(record['ticker'] ?? '')
+    .trim()
+    .toUpperCase();
+  if (ticker) {
+    const security = tickerToSecurity.get(ticker);
+    if (!security) return { issuerId: null, ticker, error: `unknown ticker ${ticker}` };
+    return { issuerId: security.issuerId, ticker, error: null };
+  }
+
+  const ammcIssuerId = String(record['ammc_issuer_id'] ?? '').trim();
+  if (ammcIssuerId) {
+    const issuer = issuerByAmmcId.get(ammcIssuerId);
+    if (!issuer) return { issuerId: null, ticker: undefined, error: 'unknown ammc_issuer_id' };
+    return { issuerId: issuer.id, ticker: undefined, error: null };
+  }
+
+  const issuerName = String(record['issuer_name'] ?? '').trim();
+  if (issuerName) {
+    const matches = issuersByNormalizedName.get(normalizeAmmcIssuerName(issuerName)) ?? [];
+    if (matches.length === 1) return { issuerId: matches[0]!.id, ticker: undefined, error: null };
+    if (matches.length > 1)
+      return { issuerId: null, ticker: undefined, error: 'ambiguous issuer_name' };
+    return { issuerId: null, ticker: undefined, error: 'unknown issuer_name' };
+  }
+
+  return {
+    issuerId: null,
+    ticker: undefined,
+    error: 'missing ticker, issuer_id, ammc_issuer_id, or issuer_name',
+  };
+}
+
+/**
+ * Parse an admin-supplied fundamentals CSV: one row per issuer/period, blanks stay null
  * (never coerced to 0), negative financial values are accepted (loss-making periods are real),
  * and any file containing at least one invalid row cannot be confirmed as a whole -- matching
- * the codebase's existing all-or-nothing admin-CSV convention.
+ * the codebase's existing all-or-nothing admin-CSV convention. Backward compatible with the
+ * original ticker-only CSV shape; issuer_id/ammc_issuer_id/issuer_name are optional additions
+ * for issuers that have no listed BVC security (see docs/COMPANY_DOCUMENTS.md).
  */
 export function previewFundamentalsCsv(
   input: string,
   knownSecurities: KnownSecurity[],
+  knownIssuers: KnownIssuer[],
   existingPeriods: ExistingFundamentalsPeriod[],
 ): FundamentalsImportPreview {
   const sourceHash = createHash('sha256').update(input).digest('hex');
   let records: Record<string, string>[];
   try {
-    // relax_column_count: a CSV uploaded before the DCF optional columns existed has fewer
+    // relax_column_count: a CSV uploaded before newer optional columns existed has fewer
     // fields than the current header and must keep working -- missing trailing fields simply
     // read as undefined below, handled the same as any other blank optional cell.
     records = parse(input, {
@@ -145,9 +212,19 @@ export function previewFundamentalsCsv(
     };
   }
 
-  const tickerToId = new Map(knownSecurities.map((s) => [s.ticker.toUpperCase(), s.id]));
+  const tickerToSecurity = new Map(knownSecurities.map((s) => [s.ticker.toUpperCase(), s]));
+  const issuerById = new Map(knownIssuers.map((i) => [i.id, i]));
+  const issuerByAmmcId = new Map(
+    knownIssuers.filter((i) => i.ammcIssuerId).map((i) => [i.ammcIssuerId as string, i]),
+  );
+  const issuersByNormalizedName = new Map<string, KnownIssuer[]>();
+  for (const issuer of knownIssuers) {
+    const key = normalizeAmmcIssuerName(issuer.name);
+    issuersByNormalizedName.set(key, [...(issuersByNormalizedName.get(key) ?? []), issuer]);
+  }
+
   const existingKeys = new Set(
-    existingPeriods.map((p) => `${p.security_id}:${p.period_type}:${p.period_end_date}`),
+    existingPeriods.map((p) => `${p.issuer_id}:${p.period_type}:${p.period_end_date}`),
   );
   const seenInFile = new Set<string>();
 
@@ -156,12 +233,14 @@ export function previewFundamentalsCsv(
     const errors: string[] = [];
     const warnings: string[] = [];
 
-    const ticker = String(record['ticker'] ?? '')
-      .trim()
-      .toUpperCase();
-    const securityId = ticker ? tickerToId.get(ticker) : undefined;
-    if (!ticker) errors.push(`Row ${row}: missing ticker`);
-    else if (!securityId) errors.push(`Row ${row}: unknown ticker ${ticker}`);
+    const resolution = resolveIssuerId(
+      record,
+      tickerToSecurity,
+      issuerById,
+      issuerByAmmcId,
+      issuersByNormalizedName,
+    );
+    if (resolution.error) errors.push(`Row ${row}: ${resolution.error}`);
 
     const periodType = String(record['period_type'] ?? '')
       .trim()
@@ -276,21 +355,19 @@ export function previewFundamentalsCsv(
     );
 
     let candidate: FundamentalsCandidate | undefined;
-    if (securityId && validPeriodEnd && !errors.length) {
-      const dedupeKey = `${securityId}:${periodType}:${periodEndDateRaw}`;
+    if (resolution.issuerId && validPeriodEnd && !errors.length) {
+      const dedupeKey = `${resolution.issuerId}:${periodType}:${periodEndDateRaw}`;
       if (seenInFile.has(dedupeKey)) {
-        errors.push(
-          `Row ${row}: duplicate ${ticker} ${periodType} ${periodEndDateRaw} in this file`,
-        );
+        errors.push(`Row ${row}: duplicate issuer ${periodType} ${periodEndDateRaw} in this file`);
       } else {
         seenInFile.add(dedupeKey);
         if (existingKeys.has(dedupeKey))
           warnings.push(
-            `Row ${row}: ${ticker} ${periodType} ${periodEndDateRaw} already has data and will be updated`,
+            `Row ${row}: ${periodType} ${periodEndDateRaw} already has data and will be updated`,
           );
         candidate = {
-          securityId,
-          ticker,
+          issuerId: resolution.issuerId,
+          ...(resolution.ticker ? { ticker: resolution.ticker } : {}),
           periodType: periodType as 'annual' | 'interim',
           interimPeriod: periodType === 'interim' ? (interimPeriodRaw as 'H1' | 'H2') : null,
           fiscalYear: Number(periodEndDateRaw.slice(0, 4)),
@@ -329,7 +406,7 @@ export function previewFundamentalsCsv(
     (r) =>
       r.candidate &&
       existingKeys.has(
-        `${r.candidate.securityId}:${r.candidate.periodType}:${r.candidate.periodEndDate}`,
+        `${r.candidate.issuerId}:${r.candidate.periodType}:${r.candidate.periodEndDate}`,
       ),
   ).length;
   const willInsert = valid - willUpdate;

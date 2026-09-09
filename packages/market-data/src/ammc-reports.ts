@@ -14,8 +14,11 @@
  * - Each row links to a per-document detail page with a small field table (Emetteur, Année,
  *   Rapports financiers, Pièce jointe) and one or more PDF attachments -- a single detail page
  *   can carry more than one attachment (e.g. an annual report plus a separate universal
- *   registration document), so the attachment URL, not the detail page, is the true per-
- *   document identity.
+ *   registration document). Neither the detail-page URL nor the attachment URL is a reliable
+ *   identity alone: the same PDF can be attached to two distinct filing records (different
+ *   detail pages/fiscal years -- observed live for Meditelecom), and one detail page can carry
+ *   more than one attachment. The true per-document identity is the pair (see
+ *   docs/COMPANY_DOCUMENTS.md "Filing identity").
  * - The "Année" field is the fiscal year AMMC tags the filing under, not a genuine publication
  *   date (it is often stamped to the last days of that same fiscal year, before a real annual
  *   report could exist) -- never treated as publicationDate here.
@@ -226,13 +229,18 @@ const COMBINING_DIACRITICS_RE = new RegExp('[\\u0300-\\u036f]', 'g');
 // Moroccan subsidiary as distinct issuers for several names (e.g. "HOLCIM" vs "HOLCIM MAROC",
 // "TOTAL (France)" vs "TotalEnergies Marketing Maroc") -- stripping it would silently collide
 // two different companies, which priority-2 exact matching must never do.
-const NORMALIZE_STOPWORDS_RE = /\b(SA|S\.A\.?|SARL|GROUPE|GROUP|\(EX[^)]*\)|EX)\b/g;
+// Matched separately from NORMALIZE_STOPWORDS_RE: a parenthesized "(ex ...)" group is not itself
+// bounded by word characters (the leading "(" breaks \b), so it must be stripped as its own pass
+// before the \b-bounded stopword pass below runs.
+const NORMALIZE_EX_PAREN_RE = /\(EX[^)]*\)/g;
+const NORMALIZE_STOPWORDS_RE = /\b(SA|S\.A\.?|SARL|GROUPE|GROUP|EX)\b/g;
 
 export function normalizeAmmcIssuerName(name: string): string {
   return name
     .normalize('NFKD')
     .replace(COMBINING_DIACRITICS_RE, '')
     .toUpperCase()
+    .replace(NORMALIZE_EX_PAREN_RE, ' ')
     .replace(NORMALIZE_STOPWORDS_RE, ' ')
     .replace(/[^A-Z0-9]+/g, ' ')
     .trim()

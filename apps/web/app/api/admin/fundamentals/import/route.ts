@@ -20,17 +20,28 @@ export async function POST(request: Request) {
   if (!(file instanceof File) || file.size === 0 || file.size > 5_000_000)
     return Response.json({ error: 'INVALID_FILE' }, { status: 400 });
 
-  const { data: securitiesData } = await supabase
-    .from('market_security_overview')
-    .select('id,ticker');
-  const knownSecurities = (securitiesData ?? []) as { id: string; ticker: string }[];
+  const [securitiesResult, issuersResult] = await Promise.all([
+    supabase.from('market_security_overview').select('id,ticker,issuer_id'),
+    supabase.from('issuer_directory').select('id,name,ammc_issuer_id'),
+  ]);
+  const knownSecurities = (
+    (securitiesResult.data ?? []) as { id: string; ticker: string; issuer_id: string }[]
+  ).map((s) => ({ id: s.id, ticker: s.ticker, issuerId: s.issuer_id }));
+  const knownIssuers = (
+    (issuersResult.data ?? []) as { id: string; name: string; ammc_issuer_id: string | null }[]
+  ).map((i) => ({ id: i.id, name: i.name, ammcIssuerId: i.ammc_issuer_id }));
 
   const { data: periodsData } = await supabase.rpc('list_fundamentals_periods', {
-    p_security_ids: knownSecurities.map((s) => s.id),
+    p_issuer_ids: knownIssuers.map((i) => i.id),
   });
   const existingPeriods = (periodsData ?? []) as ExistingFundamentalsPeriod[];
 
-  const preview = previewFundamentalsCsv(await file.text(), knownSecurities, existingPeriods);
+  const preview = previewFundamentalsCsv(
+    await file.text(),
+    knownSecurities,
+    knownIssuers,
+    existingPeriods,
+  );
   if (preview.totals.invalid > 0)
     return Response.json({ ...preview, status: 'rejected' }, { status: 422 });
   if (String(form.get('confirm') ?? '') !== '1')
@@ -40,7 +51,7 @@ export async function POST(request: Request) {
     .map((r) => r.candidate)
     .filter((c): c is NonNullable<typeof c> => Boolean(c))
     .map((c) => ({
-      securityId: c.securityId,
+      issuerId: c.issuerId,
       periodType: c.periodType,
       interimPeriod: c.interimPeriod,
       fiscalYear: c.fiscalYear,

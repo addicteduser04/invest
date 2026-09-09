@@ -59,7 +59,9 @@ free_cash_flow = operating_cash_flow - capex
 
 ## Uniqueness / idempotency
 
-`unique(security_id, period_type, period_end_date)`. Re-importing the same period updates the
+`unique(issuer_id, period_type, period_end_date)` — fundamentals belong to the issuer's
+financial statements, not to a ticker (see `docs/ISSUER_MODEL.md`); `security_id` stays on
+existing rows for traceability but is not part of the key. Re-importing the same period updates the
 existing row in place — no row-status versioning. `apply_fundamentals_import` does the upsert and
 the insert/update/no-op accounting in one statement, via
 `insert ... on conflict ... do update ... where <any column is distinct from incoming> returning (xmax = 0)`:
@@ -83,7 +85,10 @@ they existed (fewer trailing columns than the current header) still parses corre
 other blank cell.
 
 - `ticker` must resolve to a known security (via the public security directory) or the row is
-  rejected.
+  rejected. For an issuer with no listed security, use `issuer_id`, `ammc_issuer_id`, or
+  `issuer_name` instead (all optional columns, resolved in that precedence order after `ticker`
+  — see `docs/ISSUER_MODEL.md`); `issuer_name` only resolves when it exactly matches one known
+  issuer, never fuzzy.
 - `period_type` is `annual` or `interim`; `interim_period` (`H1`/`H2`) is required for interim
   rows and must be blank for annual rows.
 - `period_end_date` is required (ISO date); `publication_date` is optional.

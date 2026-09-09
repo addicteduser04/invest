@@ -24,18 +24,15 @@ export async function POST(request: Request) {
     return jsonError('INVALID_JSON', 400);
   }
   const input = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
-  const securityId = String(input.securityId ?? '');
-  const sourceIssuerId = String(input.sourceIssuerId ?? '').trim();
-  const sourceIssuerName = String(input.sourceIssuerName ?? '').trim();
-  if (!securityId || !sourceIssuerId || !sourceIssuerName) {
-    return jsonError('MISSING_FIELDS', 400);
-  }
+  const issuerId = String(input.issuerId ?? '');
+  const ammcIssuerId = String(input.ammcIssuerId ?? '').trim();
+  const ammcIssuerName = String(input.ammcIssuerName ?? '').trim();
+  if (!issuerId || !ammcIssuerId || !ammcIssuerName) return jsonError('MISSING_FIELDS', 400);
 
-  const { data, error } = await supabase.rpc('upsert_company_document_alias', {
-    p_security_id: securityId,
-    p_source_provider_id: 'ammc_public_documents',
-    p_source_issuer_id: sourceIssuerId,
-    p_source_issuer_name: sourceIssuerName,
+  const { data, error } = await supabase.rpc('upsert_issuer_ammc_link', {
+    p_issuer_id: issuerId,
+    p_ammc_issuer_id: ammcIssuerId,
+    p_ammc_issuer_name: ammcIssuerName,
   });
   if (error) return jsonError(error.message, 422);
   return Response.json({ id: data });

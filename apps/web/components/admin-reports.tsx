@@ -1,16 +1,21 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import React, { useState, type FormEvent } from 'react';
 import type { Locale } from '@bvc/contracts';
 import { getUi } from '@/lib/i18n';
 
 export interface CoverageStats {
-  companiesWithReports: number;
-  companiesWithoutReports: number;
+  totalIssuers: number;
+  listedIssuers: number;
+  unlistedIssuers: number;
+  foreignIssuers: number;
+  historicalIssuers: number;
+  issuersWithReports: number;
+  issuersWithoutReports: number;
   totalReports: number;
   earliestYear: number | null;
   latestYear: number | null;
-  unmatchedIssuers: number;
+  ambiguousIssuers: number;
   lastSync: { id: string; status: string; startedAt: string; finishedAt: string | null } | null;
 }
 
@@ -21,42 +26,44 @@ export interface SyncRun {
   scope: { ticker?: string; year?: number; all?: boolean };
   started_at: string;
   finished_at: string | null;
+  issuers_discovered: number;
+  issuers_existing: number;
+  issuers_created: number;
+  issuers_ambiguous: number;
+  issuers_with_reports: number;
+  issuers_without_reports: number;
   documents_discovered: number;
-  documents_matched: number;
   documents_inserted: number;
   documents_updated: number;
   documents_unchanged: number;
 }
 
-export interface UnmatchedIssuerRow {
+export interface AmbiguousIssuerRow {
   id: string;
   source_issuer_id: string;
   source_issuer_name: string;
-  candidate_security_id: string | null;
+  candidate_issuer_id: string | null;
   status: string;
   last_seen_at: string;
 }
 
-export interface AliasRow {
+export interface IssuerOption {
   id: string;
-  security_id: string;
-  source_issuer_id: string;
-  source_issuer_name: string;
-}
-
-export interface SecurityOption {
-  id: string;
-  ticker: string;
   name: string;
+  slug: string;
+  equity_listing_status: string;
+  issuer_type: string | null;
+  ammc_issuer_id: string | null;
+  security_id: string | null;
+  security_ticker: string | null;
 }
 
 export interface AdminReportsProps {
   locale: Locale;
   stats: CoverageStats | null;
   runs: SyncRun[];
-  unmatched: UnmatchedIssuerRow[];
-  aliases: AliasRow[];
-  securities: SecurityOption[];
+  ambiguous: AmbiguousIssuerRow[];
+  issuers: IssuerOption[];
 }
 
 const intlLocale = (locale: Locale) =>
@@ -75,29 +82,22 @@ function scopeLabel(run: SyncRun, t: ReturnType<typeof getUi>) {
   return parts.join(' · ');
 }
 
-function securityLabel(securityId: string | null, securities: SecurityOption[]) {
-  if (!securityId) return null;
-  const match = securities.find((s) => s.id === securityId);
-  return match ? `${match.ticker} — ${match.name}` : securityId;
+function issuerLabel(issuerId: string | null, issuers: IssuerOption[]) {
+  if (!issuerId) return null;
+  const match = issuers.find((i) => i.id === issuerId);
+  if (!match) return issuerId;
+  return match.security_ticker ? `${match.name} (${match.security_ticker})` : match.name;
 }
 
-export function AdminReports({
-  locale,
-  stats,
-  runs,
-  unmatched,
-  aliases,
-  securities,
-}: AdminReportsProps) {
+export function AdminReports({ locale, stats, runs, ambiguous, issuers }: AdminReportsProps) {
   const t = getUi(locale);
   const [syncing, setSyncing] = useState(false);
   const [syncTicker, setSyncTicker] = useState('');
   const [syncYear, setSyncYear] = useState('');
   const [syncDryRun, setSyncDryRun] = useState(false);
   const [syncResult, setSyncResult] = useState('');
-  const [unmatchedRows, setUnmatchedRows] = useState(unmatched);
-  const [aliasRows, setAliasRows] = useState(aliases);
-  const [busyUnmatchedId, setBusyUnmatchedId] = useState<string | null>(null);
+  const [ambiguousRows, setAmbiguousRows] = useState(ambiguous);
+  const [busyAmbiguousId, setBusyAmbiguousId] = useState<string | null>(null);
 
   const runSync = async (event: FormEvent) => {
     event.preventDefault();
@@ -120,7 +120,7 @@ export function AdminReports({
       }
       const s = body.summary;
       setSyncResult(
-        `${t.adminReportsSyncFinished}: ${s.status} — ${s.documentsDiscovered} discovered, ${s.documentsInserted} inserted, ${s.documentsUpdated} updated, ${s.unmatchedIssuers.length} unmatched`,
+        `${t.adminReportsSyncFinished}: ${s.status} — ${s.issuersDiscovered} issuers (${s.issuersCreated} new, ${s.issuersAmbiguous} ambiguous), ${s.documentsInserted} reports inserted`,
       );
     } catch {
       setSyncResult('Error');
@@ -129,19 +129,23 @@ export function AdminReports({
     }
   };
 
-  const resolveUnmatched = async (id: string, status: 'resolved' | 'ignored' | 'open') => {
-    setBusyUnmatchedId(id);
+  const resolveAmbiguous = async (
+    id: string,
+    status: 'resolved' | 'ignored',
+    linkIssuerId?: string,
+  ) => {
+    setBusyAmbiguousId(id);
     try {
-      const response = await fetch(`/api/admin/reports/unmatched/${id}`, {
+      const response = await fetch(`/api/admin/reports/ambiguous/${id}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, linkIssuerId }),
       });
       if (response.ok) {
-        setUnmatchedRows((rows) => rows.map((row) => (row.id === id ? { ...row, status } : row)));
+        setAmbiguousRows((rows) => rows.map((row) => (row.id === id ? { ...row, status } : row)));
       }
     } finally {
-      setBusyUnmatchedId(null);
+      setBusyAmbiguousId(null);
     }
   };
 
@@ -150,12 +154,28 @@ export function AdminReports({
       <section className="card">
         <div className="dashboard-grid">
           <div className="metric-card">
-            <span>{t.adminReportsCompaniesWithReports}</span>
-            <strong>{stats?.companiesWithReports ?? '—'}</strong>
+            <span>{t.adminReportsTotalIssuers}</span>
+            <strong>{stats?.totalIssuers ?? '—'}</strong>
           </div>
           <div className="metric-card">
-            <span>{t.adminReportsCompaniesWithoutReports}</span>
-            <strong>{stats?.companiesWithoutReports ?? '—'}</strong>
+            <span>{t.adminReportsListedIssuers}</span>
+            <strong>{stats?.listedIssuers ?? '—'}</strong>
+          </div>
+          <div className="metric-card">
+            <span>{t.adminReportsUnlistedIssuers}</span>
+            <strong>{stats?.unlistedIssuers ?? '—'}</strong>
+          </div>
+          <div className="metric-card">
+            <span>{t.adminReportsForeignIssuers}</span>
+            <strong>{stats?.foreignIssuers ?? '—'}</strong>
+          </div>
+          <div className="metric-card">
+            <span>{t.adminReportsIssuersWithReports}</span>
+            <strong>{stats?.issuersWithReports ?? '—'}</strong>
+          </div>
+          <div className="metric-card">
+            <span>{t.adminReportsIssuersWithoutReports}</span>
+            <strong>{stats?.issuersWithoutReports ?? '—'}</strong>
           </div>
           <div className="metric-card">
             <span>{t.adminReportsTotalReports}</span>
@@ -170,8 +190,8 @@ export function AdminReports({
             <strong>{stats?.latestYear ?? '—'}</strong>
           </div>
           <div className="metric-card">
-            <span>{t.adminReportsUnmatchedIssuers}</span>
-            <strong>{stats?.unmatchedIssuers ?? '—'}</strong>
+            <span>{t.adminReportsAmbiguousIssuers}</span>
+            <strong>{stats?.ambiguousIssuers ?? '—'}</strong>
           </div>
           <div className="metric-card">
             <span>{t.adminReportsLastSync}</span>
@@ -238,9 +258,11 @@ export function AdminReports({
                   <th>{t.adminReportsColStarted}</th>
                   <th>{t.adminReportsColStatus}</th>
                   <th>{t.adminReportsColScope}</th>
+                  <th data-numeric>{t.adminReportsColIssuers}</th>
+                  <th data-numeric>{t.adminReportsColCreated}</th>
+                  <th data-numeric>{t.adminReportsColAmbiguousCount}</th>
                   <th data-numeric>{t.adminReportsColDiscovered}</th>
                   <th data-numeric>{t.adminReportsColInserted}</th>
-                  <th data-numeric>{t.adminReportsColUpdated}</th>
                 </tr>
               </thead>
               <tbody>
@@ -251,6 +273,30 @@ export function AdminReports({
                     </td>
                     <td data-label={t.adminReportsColStatus}>{run.status}</td>
                     <td data-label={t.adminReportsColScope}>{scopeLabel(run, t)}</td>
+                    <td
+                      data-label={t.adminReportsColIssuers}
+                      data-numeric
+                      className="technical"
+                      dir="ltr"
+                    >
+                      {run.issuers_discovered}
+                    </td>
+                    <td
+                      data-label={t.adminReportsColCreated}
+                      data-numeric
+                      className="technical"
+                      dir="ltr"
+                    >
+                      {run.issuers_created}
+                    </td>
+                    <td
+                      data-label={t.adminReportsColAmbiguousCount}
+                      data-numeric
+                      className="technical"
+                      dir="ltr"
+                    >
+                      {run.issuers_ambiguous}
+                    </td>
                     <td
                       data-label={t.adminReportsColDiscovered}
                       data-numeric
@@ -267,14 +313,6 @@ export function AdminReports({
                     >
                       {run.documents_inserted}
                     </td>
-                    <td
-                      data-label={t.adminReportsColUpdated}
-                      data-numeric
-                      className="technical"
-                      dir="ltr"
-                    >
-                      {run.documents_updated}
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -284,9 +322,9 @@ export function AdminReports({
       </section>
 
       <section className="card">
-        <h2>{t.adminReportsUnmatchedTitle}</h2>
-        {unmatchedRows.filter((r) => r.status === 'open').length === 0 ? (
-          <p className="microcopy">{t.adminReportsUnmatchedEmpty}</p>
+        <h2>{t.adminReportsAmbiguousTitle}</h2>
+        {ambiguousRows.filter((r) => r.status === 'open').length === 0 ? (
+          <p className="microcopy">{t.adminReportsAmbiguousEmpty}</p>
         ) : (
           <div className="table-scroll">
             <table className="table responsive-table">
@@ -294,41 +332,21 @@ export function AdminReports({
                 <tr>
                   <th>{t.adminReportsColIssuer}</th>
                   <th>{t.adminReportsColCandidate}</th>
-                  <th>{t.adminReportsColStatus}</th>
                   <th>{t.adminReportsColActions}</th>
                 </tr>
               </thead>
               <tbody>
-                {unmatchedRows
+                {ambiguousRows
                   .filter((row) => row.status === 'open')
                   .map((row) => (
-                    <tr key={row.id}>
-                      <td data-label={t.adminReportsColIssuer}>
-                        <span dir="ltr">{row.source_issuer_id}</span> {row.source_issuer_name}
-                      </td>
-                      <td data-label={t.adminReportsColCandidate}>
-                        {securityLabel(row.candidate_security_id, securities) ?? '—'}
-                      </td>
-                      <td data-label={t.adminReportsColStatus}>{row.status}</td>
-                      <td data-label={t.adminReportsColActions}>
-                        <button
-                          type="button"
-                          className="button compact"
-                          disabled={busyUnmatchedId === row.id}
-                          onClick={() => void resolveUnmatched(row.id, 'resolved')}
-                        >
-                          {t.adminReportsResolve}
-                        </button>{' '}
-                        <button
-                          type="button"
-                          className="button compact secondary"
-                          disabled={busyUnmatchedId === row.id}
-                          onClick={() => void resolveUnmatched(row.id, 'ignored')}
-                        >
-                          {t.adminReportsIgnore}
-                        </button>
-                      </td>
-                    </tr>
+                    <AmbiguousRow
+                      key={row.id}
+                      row={row}
+                      issuers={issuers}
+                      t={t}
+                      busy={busyAmbiguousId === row.id}
+                      onResolve={resolveAmbiguous}
+                    />
                   ))}
               </tbody>
             </table>
@@ -336,32 +354,69 @@ export function AdminReports({
         )}
       </section>
 
-      <AliasesCard
-        locale={locale}
-        aliases={aliasRows}
-        setAliases={setAliasRows}
-        securities={securities}
-      />
-      <ManualEntryCard locale={locale} securities={securities} />
+      <IssuerAmmcLinkCard locale={locale} issuers={issuers} />
+      <CreateIssuerCard locale={locale} />
+      <ManualEntryCard locale={locale} issuers={issuers} />
     </>
   );
 }
 
-function AliasesCard({
-  locale,
-  aliases,
-  setAliases,
-  securities,
+function AmbiguousRow({
+  row,
+  issuers,
+  t,
+  busy,
+  onResolve,
 }: {
-  locale: Locale;
-  aliases: AliasRow[];
-  setAliases: (updater: (rows: AliasRow[]) => AliasRow[]) => void;
-  securities: SecurityOption[];
+  row: AmbiguousIssuerRow;
+  issuers: IssuerOption[];
+  t: ReturnType<typeof getUi>;
+  busy: boolean;
+  onResolve: (id: string, status: 'resolved' | 'ignored', linkIssuerId?: string) => void;
 }) {
+  const [linkTarget, setLinkTarget] = useState(row.candidate_issuer_id ?? '');
+  return (
+    <tr>
+      <td data-label={t.adminReportsColIssuer}>
+        <span dir="ltr">{row.source_issuer_id}</span> {row.source_issuer_name}
+      </td>
+      <td data-label={t.adminReportsColCandidate}>
+        <select value={linkTarget} onChange={(e) => setLinkTarget(e.target.value)}>
+          <option value="">—</option>
+          {issuers.map((issuer) => (
+            <option key={issuer.id} value={issuer.id}>
+              {issuer.name}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td data-label={t.adminReportsColActions}>
+        <button
+          type="button"
+          className="button compact"
+          disabled={busy || !linkTarget}
+          onClick={() => onResolve(row.id, 'resolved', linkTarget)}
+        >
+          {t.adminReportsLinkAndResolve}
+        </button>{' '}
+        <button
+          type="button"
+          className="button compact secondary"
+          disabled={busy}
+          onClick={() => onResolve(row.id, 'ignored')}
+        >
+          {t.adminReportsIgnore}
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function IssuerAmmcLinkCard({ locale, issuers }: { locale: Locale; issuers: IssuerOption[] }) {
   const t = getUi(locale);
-  const [securityId, setSecurityId] = useState('');
   const [issuerId, setIssuerId] = useState('');
-  const [issuerName, setIssuerName] = useState('');
+  const [ammcIssuerId, setAmmcIssuerId] = useState('');
+  const [ammcIssuerName, setAmmcIssuerName] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -370,61 +425,39 @@ function AliasesCard({
     setBusy(true);
     setMessage('');
     try {
-      const response = await fetch('/api/admin/reports/aliases', {
+      const response = await fetch('/api/admin/reports/ammc-link', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          securityId,
-          sourceIssuerId: issuerId,
-          sourceIssuerName: issuerName,
-        }),
+        body: JSON.stringify({ issuerId, ammcIssuerId, ammcIssuerName }),
       });
       const body = await response.json();
-      if (!response.ok) {
-        setMessage(String(body.error ?? 'Error'));
-        return;
-      }
-      setAliases((rows) => [
-        ...rows.filter((r) => r.security_id !== securityId),
-        {
-          id: body.id,
-          security_id: securityId,
-          source_issuer_id: issuerId,
-          source_issuer_name: issuerName,
-        },
-      ]);
-      setIssuerId('');
-      setIssuerName('');
+      setMessage(response.ok ? t.adminReportsAliasSave : String(body.error ?? 'Error'));
     } finally {
       setBusy(false);
     }
   };
 
+  const linked = issuers.filter((i) => i.ammc_issuer_id);
+
   return (
     <section className="card">
       <h2>{t.adminReportsAliasesTitle}</h2>
       <p className="microcopy">{t.adminReportsAliasesSubtitle}</p>
-      {aliases.length ? (
+      {linked.length ? (
         <div className="table-scroll">
           <table className="table responsive-table">
             <thead>
               <tr>
                 <th>{t.adminReportsAliasSecurityLabel}</th>
                 <th>{t.adminReportsAliasIssuerIdLabel}</th>
-                <th>{t.adminReportsAliasIssuerNameLabel}</th>
               </tr>
             </thead>
             <tbody>
-              {aliases.map((alias) => (
-                <tr key={alias.id}>
-                  <td data-label={t.adminReportsAliasSecurityLabel}>
-                    {securityLabel(alias.security_id, securities) ?? alias.security_id}
-                  </td>
+              {linked.map((issuer) => (
+                <tr key={issuer.id}>
+                  <td data-label={t.adminReportsAliasSecurityLabel}>{issuer.name}</td>
                   <td data-label={t.adminReportsAliasIssuerIdLabel} className="technical" dir="ltr">
-                    {alias.source_issuer_id}
-                  </td>
-                  <td data-label={t.adminReportsAliasIssuerNameLabel}>
-                    {alias.source_issuer_name}
+                    {issuer.ammc_issuer_id}
                   </td>
                 </tr>
               ))}
@@ -435,11 +468,11 @@ function AliasesCard({
       <form className="form" onSubmit={save}>
         <label>
           {t.adminReportsAliasSecurityLabel}
-          <select value={securityId} onChange={(e) => setSecurityId(e.target.value)} required>
+          <select value={issuerId} onChange={(e) => setIssuerId(e.target.value)} required>
             <option value="">—</option>
-            {securities.map((security) => (
-              <option key={security.id} value={security.id}>
-                {security.ticker} — {security.name}
+            {issuers.map((issuer) => (
+              <option key={issuer.id} value={issuer.id}>
+                {issuer.name}
               </option>
             ))}
           </select>
@@ -449,14 +482,18 @@ function AliasesCard({
           <input
             className="technical"
             dir="ltr"
-            value={issuerId}
-            onChange={(e) => setIssuerId(e.target.value)}
+            value={ammcIssuerId}
+            onChange={(e) => setAmmcIssuerId(e.target.value)}
             required
           />
         </label>
         <label>
           {t.adminReportsAliasIssuerNameLabel}
-          <input value={issuerName} onChange={(e) => setIssuerName(e.target.value)} required />
+          <input
+            value={ammcIssuerName}
+            onChange={(e) => setAmmcIssuerName(e.target.value)}
+            required
+          />
         </label>
         <button className="button compact" disabled={busy}>
           {t.adminReportsAliasSave}
@@ -471,9 +508,82 @@ function AliasesCard({
   );
 }
 
-function ManualEntryCard({ locale, securities }: { locale: Locale; securities: SecurityOption[] }) {
+function CreateIssuerCard({ locale }: { locale: Locale }) {
   const t = getUi(locale);
-  const [securityId, setSecurityId] = useState('');
+  const [name, setName] = useState('');
+  const [equityListingStatus, setEquityListingStatus] = useState('no_listed_bvc_equity');
+  const [issuerType, setIssuerType] = useState('unlisted_company');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('');
+    try {
+      const response = await fetch('/api/admin/reports/issuers', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name, equityListingStatus, issuerType }),
+      });
+      const body = await response.json();
+      if (response.ok) {
+        setMessage(t.adminReportsIssuerCreated);
+        setName('');
+      } else {
+        setMessage(String(body.error ?? 'Error'));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card">
+      <h2>{t.adminReportsCreateIssuerTitle}</h2>
+      <form className="form" onSubmit={save}>
+        <label>
+          {t.adminReportsCreateIssuerNameLabel}
+          <input value={name} onChange={(e) => setName(e.target.value)} required />
+        </label>
+        <label>
+          {t.adminReportsCreateIssuerListingLabel}
+          <select
+            value={equityListingStatus}
+            onChange={(e) => setEquityListingStatus(e.target.value)}
+          >
+            <option value="no_listed_bvc_equity">{t.adminReportsListingNoListedEquity}</option>
+            <option value="historical_or_delisted">{t.adminReportsListingHistorical}</option>
+            <option value="unknown">{t.adminReportsListingUnknown}</option>
+          </select>
+        </label>
+        <label>
+          {t.adminReportsCreateIssuerTypeLabel}
+          <select value={issuerType} onChange={(e) => setIssuerType(e.target.value)}>
+            <option value="unlisted_company">unlisted_company</option>
+            <option value="public_entity">public_entity</option>
+            <option value="financial_institution">financial_institution</option>
+            <option value="foreign_issuer">foreign_issuer</option>
+            <option value="historical_issuer">historical_issuer</option>
+            <option value="other">other</option>
+          </select>
+        </label>
+        <button className="button compact" disabled={busy}>
+          {t.adminReportsCreateIssuerSave}
+        </button>
+      </form>
+      {message ? (
+        <p className="status-message" role="status">
+          {message}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function ManualEntryCard({ locale, issuers }: { locale: Locale; issuers: IssuerOption[] }) {
+  const t = getUi(locale);
+  const [issuerId, setIssuerId] = useState('');
   const [fiscalYear, setFiscalYear] = useState('');
   const [title, setTitle] = useState('');
   const [sourceUrl, setSourceUrl] = useState('');
@@ -491,7 +601,7 @@ function ManualEntryCard({ locale, securities }: { locale: Locale; securities: S
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          securityId,
+          issuerId,
           fiscalYear: Number(fiscalYear),
           title,
           sourceUrl,
@@ -521,11 +631,11 @@ function ManualEntryCard({ locale, securities }: { locale: Locale; securities: S
       <form className="form" onSubmit={save}>
         <label>
           {t.adminReportsManualSecurityLabel}
-          <select value={securityId} onChange={(e) => setSecurityId(e.target.value)} required>
+          <select value={issuerId} onChange={(e) => setIssuerId(e.target.value)} required>
             <option value="">—</option>
-            {securities.map((security) => (
-              <option key={security.id} value={security.id}>
-                {security.ticker} — {security.name}
+            {issuers.map((issuer) => (
+              <option key={issuer.id} value={issuer.id}>
+                {issuerLabel(issuer.id, issuers)}
               </option>
             ))}
           </select>

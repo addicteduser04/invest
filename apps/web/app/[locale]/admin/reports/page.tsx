@@ -26,14 +26,17 @@ export default async function ReportsAdminPage({
     .maybeSingle();
   if (!role) redirect(`/${locale}/dashboard`);
 
-  const [statsResult, runsResult, unmatchedResult, aliasesResult, securitiesResult] =
-    await Promise.all([
-      supabase.rpc('company_documents_coverage_stats'),
-      supabase.rpc('list_document_sync_runs'),
-      supabase.rpc('list_unmatched_document_issuers'),
-      supabase.rpc('list_company_document_aliases'),
-      supabase.from('market_security_overview').select('id,ticker,name').order('ticker'),
-    ]);
+  const [statsResult, runsResult, ambiguousResult, issuersResult] = await Promise.all([
+    supabase.rpc('company_documents_coverage_stats'),
+    supabase.rpc('list_document_sync_runs'),
+    supabase.rpc('list_ambiguous_document_issuers'),
+    supabase
+      .from('issuer_directory')
+      .select(
+        'id,name,slug,equity_listing_status,issuer_type,ammc_issuer_id,security_id,security_ticker',
+      )
+      .order('name'),
+  ]);
 
   return (
     <main className="public-page admin-v2-page" dir={direction(locale)}>
@@ -54,9 +57,8 @@ export default async function ReportsAdminPage({
           locale={locale}
           stats={statsResult.data as AdminReportsProps['stats']}
           runs={(runsResult.data ?? []) as AdminReportsProps['runs']}
-          unmatched={(unmatchedResult.data ?? []) as AdminReportsProps['unmatched']}
-          aliases={(aliasesResult.data ?? []) as AdminReportsProps['aliases']}
-          securities={(securitiesResult.data ?? []) as AdminReportsProps['securities']}
+          ambiguous={(ambiguousResult.data ?? []) as AdminReportsProps['ambiguous']}
+          issuers={(issuersResult.data ?? []) as AdminReportsProps['issuers']}
         />
       </div>
       <PublicFooter locale={locale} authenticated />
