@@ -19,6 +19,10 @@ export {
   type FundamentalsImportPreview,
 } from './fundamentals-import';
 
+// Mirrors apps/web/lib/transaction-import.ts's MAX_IMPORT_ROWS: the file-size cap enforced by
+// callers does not bound row count for a file of very short rows.
+export const MAX_PRICE_IMPORT_ROWS = 5_000;
+
 export interface CsvMapping {
   date: string;
   ticker: string;
@@ -82,6 +86,14 @@ export class AdminCsvProvider implements MarketDataProvider {
       >[];
     } catch {
       return { sourceHash, candidates: [], errors: ['CSV file is malformed'], warnings: [] };
+    }
+    if (records.length > MAX_PRICE_IMPORT_ROWS) {
+      return {
+        sourceHash,
+        candidates: [],
+        errors: [`CSV exceeds the ${MAX_PRICE_IMPORT_ROWS}-row limit`],
+        warnings: [],
+      };
     }
     const errors: string[] = [];
     const warnings: string[] = [];

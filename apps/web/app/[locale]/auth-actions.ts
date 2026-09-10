@@ -4,6 +4,7 @@ import { cookies, headers } from 'next/headers';
 import { transactionInputSchema } from '@bvc/contracts';
 import { createClient } from '@/lib/supabase/server';
 import { asLocale } from '@/lib/i18n';
+import { checkRateLimit, RATE_LIMIT_TIERS } from '@/lib/rate-limit';
 
 export type RecordTransactionState = {
   error?: string;
@@ -55,6 +56,12 @@ export async function createPortfolio(formData: FormData) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error('Unauthorized');
+  const rateLimit = await checkRateLimit(supabase, {
+    scope: 'portfolio.create',
+    identity: user.id,
+    ...RATE_LIMIT_TIERS.restricted,
+  });
+  if (!rateLimit.allowed) throw new Error('RATE_LIMITED');
   const mode = formData.get('trackingMode') === 'virtual' ? 'virtual' : 'real_tracking';
   const { error } = await supabase.from('portfolios').insert({
     owner_id: user.id,
@@ -93,6 +100,12 @@ async function recordTransactionCommand(formData: FormData) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error('Unauthorized');
+  const rateLimit = await checkRateLimit(supabase, {
+    scope: 'transaction.record',
+    identity: user.id,
+    ...RATE_LIMIT_TIERS.restricted,
+  });
+  if (!rateLimit.allowed) throw new Error('RATE_LIMITED');
   const portfolioId = String(formData.get('portfolioId'));
   const settlementDate = formData.get('settlementDate')
     ? String(formData.get('settlementDate'))
@@ -165,6 +178,7 @@ function humanizeTransactionError(error: unknown, locale: 'en' | 'fr' | 'ar') {
       invalid:
         'Check the amount, quantity, price, fees, and taxes before recording this operation.',
       forbidden: 'You are not allowed to record this operation for this portfolio.',
+      rateLimited: 'Too many operations recorded in a short time. Wait a moment and try again.',
       fallback: 'Unable to record this operation. Check the details and try again.',
     },
     fr: {
@@ -172,12 +186,15 @@ function humanizeTransactionError(error: unknown, locale: 'en' | 'fr' | 'ar') {
       invalid:
         'Vérifiez le montant, la quantité, le prix, les frais et les taxes avant d’enregistrer cette opération.',
       forbidden: 'Vous n’êtes pas autorisé à enregistrer cette opération pour ce portefeuille.',
+      rateLimited:
+        'Trop d’opérations enregistrées en peu de temps. Patientez un instant et réessayez.',
       fallback: 'Impossible d’enregistrer cette opération. Vérifiez les informations et réessayez.',
     },
     ar: {
       quantity: 'البيع أكبر من الكمية المسجلة لهذا السهم.',
       invalid: 'تحقق من المبلغ والكمية والسعر والرسوم والضرائب قبل تسجيل هذه العملية.',
       forbidden: 'لا تملك صلاحية تسجيل هذه العملية لهذه المحفظة.',
+      rateLimited: 'تم تسجيل عمليات كثيرة خلال وقت قصير. انتظر لحظة ثم أعد المحاولة.',
       fallback: 'تعذر تسجيل هذه العملية. تحقق من التفاصيل وحاول مرة أخرى.',
     },
   }[locale];
@@ -190,7 +207,10 @@ function humanizeTransactionError(error: unknown, locale: 'en' | 'fr' | 'ar') {
   if (/forbidden|unauthorized/i.test(message)) {
     return copy.forbidden;
   }
-  return message || copy.fallback;
+  if (/rate_limited/i.test(message)) {
+    return copy.rateLimited;
+  }
+  return copy.fallback;
 }
 
 export async function requestPasswordReset(formData: FormData) {

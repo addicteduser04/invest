@@ -8,7 +8,8 @@ import {
   runDailyIngestion,
   type ProviderId,
 } from '@bvc/market-ingestion';
-import { createClient } from '@/lib/supabase/server';
+import { isErrorResponse, requireDataAdmin } from '@/lib/admin-auth';
+import { RATE_LIMIT_TIERS } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
@@ -16,18 +17,11 @@ const jsonError = (message: string, status: number) =>
   Response.json({ error: message }, { status });
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return jsonError('Unauthorized', 401);
-  const { data: role } = await supabase
-    .from('user_roles')
-    .select('role')
-    .eq('user_id', user.id)
-    .eq('role', 'data_admin')
-    .maybeSingle();
-  if (!role) return jsonError('Forbidden', 403);
+  const auth = await requireDataAdmin({
+    scope: 'admin.market-data.run',
+    ...RATE_LIMIT_TIERS.veryRestricted,
+  });
+  if (isErrorResponse(auth)) return auth;
 
   let body: unknown;
   try {
@@ -107,9 +101,14 @@ export async function POST(request: Request) {
       },
     )
       .then((summary) => respondOnce(Response.json({ summary })))
-      .catch((error) =>
-        respondOnce(jsonError(error instanceof Error ? error.message : 'INGESTION_FAILED', 502)),
-      )
+      .catch((error) => {
+        // The unique index one_running_ingestion_run_per_date_provider_uq (already applied) is
+        // the real dedup guard; a collision means a run for this date/provider is already in
+        // progress, which is a client-facing conflict, not an upstream ingestion failure.
+        const code = (error as { code?: string } | null)?.code;
+        if (code === '23505') return respondOnce(jsonError('ALREADY_RUNNING', 409));
+        respondOnce(jsonError(error instanceof Error ? error.message : 'INGESTION_FAILED', 502));
+      })
       .finally(() => void store.close());
   });
 }

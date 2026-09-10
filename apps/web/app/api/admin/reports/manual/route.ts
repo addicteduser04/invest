@@ -1,21 +1,12 @@
-import { createClient } from '@/lib/supabase/server';
+import { isErrorResponse, requireDataAdmin } from '@/lib/admin-auth';
 
 const jsonError = (message: string, status: number) =>
   Response.json({ error: message }, { status });
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return jsonError('UNAUTHENTICATED', 401);
-  const { data: role } = await supabase
-    .from('user_roles')
-    .select('role')
-    .eq('user_id', user.id)
-    .eq('role', 'data_admin')
-    .maybeSingle();
-  if (!role) return jsonError('FORBIDDEN', 403);
+  const auth = await requireDataAdmin();
+  if (isErrorResponse(auth)) return auth;
+  const { supabase } = auth;
 
   let body: unknown;
   try {

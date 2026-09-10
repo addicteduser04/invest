@@ -12,6 +12,7 @@ interface StoredScenario {
 const state = vi.hoisted(() => ({
   user: null as { id: string } | null,
   rows: [] as StoredScenario[],
+  rateLimitAllowed: true,
 }));
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -19,6 +20,12 @@ vi.mock('@/lib/supabase/server', () => ({
     auth: {
       getUser: async () => ({ data: { user: state.user } }),
     },
+    rpc: async () => ({
+      data: state.rateLimitAllowed
+        ? { allowed: true, count: 1, limit: 20, retryAfterSeconds: 300 }
+        : { allowed: false, count: 21, limit: 20, retryAfterSeconds: 42 },
+      error: null,
+    }),
     from: (table: string) => {
       if (table !== 'dcf_scenarios') throw new Error(`unexpected table ${table}`);
       return {
@@ -88,6 +95,7 @@ describe('DCF scenario persistence route', () => {
   beforeEach(() => {
     state.user = null;
     state.rows = [];
+    state.rateLimitAllowed = true;
   });
 
   it('denies an unauthenticated GET and POST', async () => {
@@ -133,5 +141,24 @@ describe('DCF scenario persistence route', () => {
     const list = await GET(getReq(SECURITY_A));
     const body = (await list.json()) as { scenarios: StoredScenario[] };
     expect(body.scenarios).toEqual([]);
+  });
+
+  it('rejects an oversized assumptions payload with 413', async () => {
+    state.user = USER_A;
+    const huge = { note: 'x'.repeat(20_000) };
+    const response = await POST(
+      postReq({ securityId: SECURITY_A, name: 'Base case', assumptions: huge }),
+    );
+    expect(response.status).toBe(413);
+  });
+
+  it('returns 429 with Retry-After once the save rate limit is exceeded', async () => {
+    state.user = USER_A;
+    state.rateLimitAllowed = false;
+    const response = await POST(
+      postReq({ securityId: SECURITY_A, name: 'Base case', assumptions: { wacc: 0.1 } }),
+    );
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('42');
   });
 });

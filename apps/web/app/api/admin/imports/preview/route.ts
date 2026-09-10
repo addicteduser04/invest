@@ -1,19 +1,14 @@
 import { AdminCsvProvider } from '@bvc/market-data';
-import { createClient } from '@/lib/supabase/server';
+import { isErrorResponse, requireDataAdmin } from '@/lib/admin-auth';
+import { RATE_LIMIT_TIERS } from '@/lib/rate-limit';
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  const { data: role } = await supabase
-    .from('user_roles')
-    .select('role')
-    .eq('user_id', user.id)
-    .eq('role', 'data_admin')
-    .maybeSingle();
-  if (!role) return Response.json({ error: 'Forbidden' }, { status: 403 });
+  const auth = await requireDataAdmin({
+    scope: 'admin.imports.preview',
+    ...RATE_LIMIT_TIERS.veryRestricted,
+  });
+  if (isErrorResponse(auth)) return auth;
+  const { supabase } = auth;
 
   const form = await request.formData();
   const file = form.get('file');

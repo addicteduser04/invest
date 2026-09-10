@@ -1,5 +1,6 @@
 import { localizeError, type ErrorCode } from '@bvc/contracts';
 import { createClient } from '@/lib/supabase/server';
+import { checkRateLimit, RATE_LIMIT_TIERS, rateLimitResponse } from '@/lib/rate-limit';
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = await request.json();
@@ -13,6 +14,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       { code: 'UNAUTHENTICATED', message: localizeError({ code: 'UNAUTHENTICATED' }, locale) },
       { status: 401 },
     );
+  const rateLimit = await checkRateLimit(supabase, {
+    scope: 'transaction-imports.confirm',
+    identity: user.id,
+    ...RATE_LIMIT_TIERS.restricted,
+  });
+  if (!rateLimit.allowed) return rateLimitResponse(rateLimit);
   const { data, error } = await supabase.rpc('confirm_transaction_import', { p_import_id: id });
   if (error) {
     const allowed: ErrorCode[] = [

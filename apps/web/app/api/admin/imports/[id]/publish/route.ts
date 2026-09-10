@@ -1,11 +1,13 @@
-import { createClient } from '@/lib/supabase/server';
+import { isErrorResponse, requireDataAdmin } from '@/lib/admin-auth';
+import { RATE_LIMIT_TIERS } from '@/lib/rate-limit';
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  const auth = await requireDataAdmin({
+    scope: 'admin.imports.publish',
+    ...RATE_LIMIT_TIERS.veryRestricted,
+  });
+  if (isErrorResponse(auth)) return auth;
+  const { supabase } = auth;
   const body: unknown = await request.json().catch(() => null);
   const reason =
     body && typeof body === 'object' && 'reason' in body ? String(body.reason ?? '') : 'Approved';

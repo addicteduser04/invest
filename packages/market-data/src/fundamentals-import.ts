@@ -3,6 +3,11 @@ import Decimal from 'decimal.js';
 import { parse } from 'csv-parse/sync';
 import { normalizeAmmcIssuerName } from './ammc-reports';
 
+// Mirrors apps/web/lib/transaction-import.ts's MAX_IMPORT_ROWS: the 5MB file-size cap alone does
+// not bound row count for a file of very short rows, and per-row processing below (Decimal
+// parsing, issuer/security resolution, dedupe) has real per-row cost.
+export const MAX_FUNDAMENTALS_IMPORT_ROWS = 5_000;
+
 export interface KnownSecurity {
   id: string;
   ticker: string;
@@ -207,6 +212,21 @@ export function previewFundamentalsCsv(
     return {
       sourceHash,
       rows: [{ row: 1, values: {}, errors: ['Fundamentals CSV is empty'], warnings: [] }],
+      totals: emptyTotals,
+      canConfirm: false,
+    };
+  }
+  if (records.length > MAX_FUNDAMENTALS_IMPORT_ROWS) {
+    return {
+      sourceHash,
+      rows: [
+        {
+          row: 1,
+          values: {},
+          errors: [`Fundamentals CSV exceeds the ${MAX_FUNDAMENTALS_IMPORT_ROWS}-row limit`],
+          warnings: [],
+        },
+      ],
       totals: emptyTotals,
       canConfirm: false,
     };

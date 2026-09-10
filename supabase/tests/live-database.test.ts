@@ -1511,4 +1511,74 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
       ).rejects.toThrow(/permission denied/);
     });
   });
+
+  // Security/cost/abuse hardening milestone: public.portfolio_replay_transactions
+  // (202608270001) is a `security_invoker=false` view flagged by the Supabase Security Advisor
+  // (ERROR: security_definer_view) -- reviewed as intentional (see
+  // 202609100001_security_hardening.sql's opening comment), because its own
+  // `where exists(... p.owner_id=auth.uid())` clause is the compensating authorization, not the
+  // underlying RLS (which does not independently apply to a definer view). This proves that
+  // clause actually holds live, not just by code review.
+  it("portfolio_replay_transactions never exposes another user's transactions, even to a definer view", async () => {
+    await record(ids.userA, ids.portfolioA, 'deposit', randomUUID(), '42');
+    await record(ids.userB, ids.portfolioB, 'deposit', randomUUID(), '99');
+
+    // ids.userA owns several portfolios in this shared fixture (portfolioA, importPortfolio,
+    // reversalPortfolio), so "own rows" means "never someone else's portfolio", not "exactly
+    // one portfolio id".
+    const ownRows = await asUser<{ portfolio_id: string }>(
+      ids.userA,
+      'select portfolio_id from public.portfolio_replay_transactions',
+    );
+    expect(ownRows.rows.length).toBeGreaterThan(0);
+    expect(ownRows.rows.some((r) => r.portfolio_id === ids.portfolioA)).toBe(true);
+    expect(ownRows.rows.every((r) => r.portfolio_id !== ids.portfolioB)).toBe(true);
+
+    const otherRows = await asUser<{ portfolio_id: string }>(
+      ids.userB,
+      'select portfolio_id from public.portfolio_replay_transactions',
+    );
+    expect(otherRows.rows.length).toBeGreaterThan(0);
+    expect(otherRows.rows.every((r) => r.portfolio_id === ids.portfolioB)).toBe(true);
+    expect(otherRows.rows.some((r) => r.portfolio_id === ids.portfolioA)).toBe(false);
+
+    await expect(
+      asUser(null, 'select 1 from public.portfolio_replay_transactions limit 1'),
+    ).rejects.toThrow(/permission denied/);
+  });
+
+  // Role escalation audit (mission section 11): no user-controlled path -- direct table write,
+  // signup metadata, or otherwise -- can grant data_admin. private.create_profile() (the
+  // auth.users insert trigger) hardcodes 'investor' regardless of raw_user_meta_data content;
+  // the grant on public.user_roles to authenticated is select-only (202608280006), so this is a
+  // privilege check at the grant layer, not just an RLS policy that could be misconfigured.
+  it('gives every new signup exactly the investor role, ignoring any role-like signup metadata', async () => {
+    const attackerId = randomUUID();
+    await adminClient.query(
+      `insert into auth.users(id, instance_id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+       values($1::uuid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', $1::text || '@example.test', '', '{}', $2::jsonb, now(), now())`,
+      [attackerId, JSON.stringify({ role: 'data_admin', app_metadata: { role: 'data_admin' } })],
+    );
+    const role = await adminClient.query<{ role: string }>(
+      'select role from public.user_roles where user_id=$1',
+      [attackerId],
+    );
+    expect(role.rows).toEqual([{ role: 'investor' }]);
+    await adminClient.query('delete from public.user_roles where user_id=$1', [attackerId]);
+    await adminClient.query('delete from public.profiles where id=$1', [attackerId]);
+    await adminClient.query('delete from auth.users where id=$1', [attackerId]);
+  });
+
+  it('rejects an authenticated investor writing to public.user_roles at the grant layer', async () => {
+    await expect(
+      asUser(ids.userA, "insert into public.user_roles(user_id,role) values($1,'data_admin')", [
+        ids.userA,
+      ]),
+    ).rejects.toThrow(/permission denied/);
+    await expect(
+      asUser(ids.userA, "update public.user_roles set role='data_admin' where user_id=$1", [
+        ids.userA,
+      ]),
+    ).rejects.toThrow(/permission denied/);
+  });
 });

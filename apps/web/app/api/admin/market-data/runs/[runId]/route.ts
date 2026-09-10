@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { isErrorResponse, requireDataAdmin } from '@/lib/admin-auth';
 
 export const runtime = 'nodejs';
 
@@ -6,18 +6,9 @@ const jsonError = (message: string, status: number) =>
   Response.json({ error: message }, { status });
 
 export async function GET(_request: Request, { params }: { params: Promise<{ runId: string }> }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return jsonError('Unauthorized', 401);
-  const { data: role } = await supabase
-    .from('user_roles')
-    .select('role')
-    .eq('user_id', user.id)
-    .eq('role', 'data_admin')
-    .maybeSingle();
-  if (!role) return jsonError('Forbidden', 403);
+  const auth = await requireDataAdmin();
+  if (isErrorResponse(auth)) return auth;
+  const { supabase } = auth;
 
   const { runId } = await params;
   const { data, error } = await supabase.rpc('get_market_ingestion_run', { p_run_id: runId });

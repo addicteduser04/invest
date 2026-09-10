@@ -1,4 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
+import { checkRateLimit, RATE_LIMIT_TIERS, rateLimitResponse } from '@/lib/rate-limit';
+
+// DCF assumptions are a handful of flat numeric fields (docs/DCF.md) -- this is a generous
+// ceiling against an oversized/abusive payload, not a tight fit to the real shape.
+const MAX_ASSUMPTIONS_JSON_BYTES = 8_192;
 
 interface ScenarioRow {
   id: string;
@@ -42,6 +47,13 @@ export async function POST(request: Request) {
   } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: 'UNAUTHENTICATED' }, { status: 401 });
 
+  const rateLimit = await checkRateLimit(supabase, {
+    scope: 'dcf.scenarios.save',
+    identity: user.id,
+    ...RATE_LIMIT_TIERS.restricted,
+  });
+  if (!rateLimit.allowed) return rateLimitResponse(rateLimit);
+
   const body = (await request.json().catch(() => null)) as {
     securityId?: string;
     name?: string;
@@ -52,6 +64,9 @@ export async function POST(request: Request) {
   const assumptions = body?.assumptions;
   if (!securityId || !name || name.length > 100 || assumptions === undefined) {
     return Response.json({ error: 'INVALID_SCENARIO' }, { status: 400 });
+  }
+  if (Buffer.byteLength(JSON.stringify(assumptions), 'utf8') > MAX_ASSUMPTIONS_JSON_BYTES) {
+    return Response.json({ error: 'ASSUMPTIONS_TOO_LARGE' }, { status: 413 });
   }
 
   const { data, error } = await supabase

@@ -146,6 +146,8 @@ export function MasiHeroChart({
     <section className="masi-hero-panel" aria-label={t.masiChartTitle}>
       <Script
         src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"
+        integrity="sha384-q1KYLSKHgBnW5tWYGGR8+6YV4/iPy31dILoF2I1OD7XiVUvHEp/TaxIQVmB0j3R2"
+        crossOrigin="anonymous"
         strategy="afterInteractive"
         onReady={() => {
           if (getLightweightCharts()) setScriptReady(true);

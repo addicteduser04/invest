@@ -8,7 +8,13 @@ const state = vi.hoisted(() => ({
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({
     auth: { getUser: async () => ({ data: { user: state.user } }) },
-    rpc: async () => ({ data: state.rpcData, error: state.rpcError }),
+    // check_rate_limit is a second, distinct RPC the route now calls before
+    // confirm_transaction_import (see apps/web/lib/rate-limit.ts) -- always "allowed" here so
+    // these tests keep exercising confirm_transaction_import's own response, not the limiter.
+    rpc: async (name: string) =>
+      name === 'check_rate_limit'
+        ? { data: { allowed: true, count: 1, limit: 20, retryAfterSeconds: 0 }, error: null }
+        : { data: state.rpcData, error: state.rpcError },
   }),
 }));
 import { POST as confirm } from './[id]/confirm/route';

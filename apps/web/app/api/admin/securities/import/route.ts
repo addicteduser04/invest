@@ -1,19 +1,11 @@
 import { previewSecurityMasterCsv } from '@bvc/market-data';
-import { createClient } from '@/lib/supabase/server';
+import { isErrorResponse, requireDataAdmin } from '@/lib/admin-auth';
+import { checkRateLimit, RATE_LIMIT_TIERS, rateLimitResponse } from '@/lib/rate-limit';
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return Response.json({ error: 'UNAUTHENTICATED' }, { status: 401 });
-  const { data: role } = await supabase
-    .from('user_roles')
-    .select('role')
-    .eq('user_id', user.id)
-    .eq('role', 'data_admin')
-    .maybeSingle();
-  if (!role) return Response.json({ error: 'FORBIDDEN' }, { status: 403 });
+  const auth = await requireDataAdmin();
+  if (isErrorResponse(auth)) return auth;
+  const { supabase, userId } = auth;
 
   const form = await request.formData();
   const file = form.get('file');
@@ -24,6 +16,13 @@ export async function POST(request: Request) {
     return Response.json({ ...preview, status: 'validation_failed' }, { status: 422 });
   if (String(form.get('confirm') ?? '') !== '1')
     return Response.json({ ...preview, status: 'preview' });
+
+  const rateLimit = await checkRateLimit(supabase, {
+    scope: 'admin.securities.import',
+    identity: userId,
+    ...RATE_LIMIT_TIERS.veryRestricted,
+  });
+  if (!rateLimit.allowed) return rateLimitResponse(rateLimit);
 
   const { data, error } = await supabase.rpc('upsert_market_security_master', {
     p_rows: preview.candidates,

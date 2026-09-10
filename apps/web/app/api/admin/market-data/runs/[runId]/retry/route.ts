@@ -6,7 +6,8 @@ import {
   runDailyIngestion,
   type ProviderId,
 } from '@bvc/market-ingestion';
-import { createClient } from '@/lib/supabase/server';
+import { isErrorResponse, requireDataAdmin } from '@/lib/admin-auth';
+import { RATE_LIMIT_TIERS } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
@@ -14,18 +15,11 @@ const jsonError = (message: string, status: number) =>
   Response.json({ error: message }, { status });
 
 export async function POST(_request: Request, { params }: { params: Promise<{ runId: string }> }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return jsonError('Unauthorized', 401);
-  const { data: role } = await supabase
-    .from('user_roles')
-    .select('role')
-    .eq('user_id', user.id)
-    .eq('role', 'data_admin')
-    .maybeSingle();
-  if (!role) return jsonError('Forbidden', 403);
+  const auth = await requireDataAdmin({
+    scope: 'admin.market-data.retry',
+    ...RATE_LIMIT_TIERS.veryRestricted,
+  });
+  if (isErrorResponse(auth)) return auth;
 
   const { runId } = await params;
 

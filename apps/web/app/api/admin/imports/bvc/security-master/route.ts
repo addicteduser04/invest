@@ -1,5 +1,6 @@
 import { fetchBvcSecurityMasterPreview } from '@bvc/market-data';
-import { createClient } from '@/lib/supabase/server';
+import { isErrorResponse, requireDataAdmin } from '@/lib/admin-auth';
+import { RATE_LIMIT_TIERS } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
@@ -10,18 +11,12 @@ export async function POST(request: Request) {
   if (process.env.BVC_PUBLIC_TESTING_ENABLED !== 'true')
     return jsonError('BVC public testing connector is disabled', 404);
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return jsonError('Unauthorized', 401);
-  const { data: role } = await supabase
-    .from('user_roles')
-    .select('role')
-    .eq('user_id', user.id)
-    .eq('role', 'data_admin')
-    .maybeSingle();
-  if (!role) return jsonError('Forbidden', 403);
+  const auth = await requireDataAdmin({
+    scope: 'admin.imports.bvc.security-master',
+    ...RATE_LIMIT_TIERS.veryRestricted,
+  });
+  if (isErrorResponse(auth)) return auth;
+  const { supabase } = auth;
 
   let action = 'preview';
   try {
