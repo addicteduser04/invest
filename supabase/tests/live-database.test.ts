@@ -1581,4 +1581,28 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
       ]),
     ).rejects.toThrow(/permission denied/);
   });
+
+  // Found live on staging (not reproducible on local dev, which already defaulted correctly):
+  // several data_admin-gated RPCs were executable by `anon` via PostgREST despite an explicit
+  // `revoke ... from public` in their defining migration
+  // (202609100002_revoke_anon_admin_rpc_execute.sql, 202609100003). Regression coverage so a
+  // future migration cannot silently reopen this at the grant layer, even though each function's
+  // own body independently rejects a non-admin caller.
+  it('never grants anon EXECUTE on data_admin-gated RPCs', async () => {
+    const sample = [
+      'apply_fundamentals_import(text,text,jsonb,jsonb)',
+      'company_documents_coverage_stats()',
+      'upsert_market_indices(jsonb)',
+      'get_market_data_operational_snapshot()',
+      'upsert_issuer_ammc_link(uuid,text,text)',
+    ];
+    const result = await adminClient.query<{ fn: string; anon_can: boolean }>(
+      `select fn, has_function_privilege('anon', fn, 'execute') as anon_can
+       from unnest($1::text[]) as fn`,
+      [sample.map((fn) => `public.${fn}`)],
+    );
+    for (const row of result.rows) {
+      expect(row.anon_can, `${row.fn} must not be anon-executable`).toBe(false);
+    }
+  });
 });

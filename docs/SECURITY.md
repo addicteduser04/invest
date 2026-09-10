@@ -16,15 +16,48 @@ are per-row-owned, not globally-public data.
 
 ## Supabase Security Advisor
 
-Ran `supabase db advisors --local --type security` against the current schema. Findings and
-disposition:
+Ran `supabase db advisors --type security` against **both** local dev and the live staging
+project — the two disagreed on one important finding (see below), so both were checked, not just
+local. Findings and disposition:
 
-| Finding                                                                                                          | Count | Disposition                                                                                                                                                                                                                    |
-| ---------------------------------------------------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `function_search_path_mutable` (`private.prevent_mutation`, `private.normalize_company_name`, `private.slugify`) | 3     | **Fixed** — `set search_path=''` added in `202609100001_security_hardening.sql`, matching every other function in the codebase. None were `SECURITY DEFINER`, so this was not a privilege-escalation path, just inconsistency. |
-| `extension_in_public` (`unaccent`)                                                                               | 1     | **Fixed** — moved to the `extensions` schema (where every other extension in this project already lives) in the same migration.                                                                                                |
-| `rls_enabled_no_policy` (8 `market.*` tables)                                                                    | 8     | **Reviewed, intentional** — this is the total-lockout-by-design pattern above. A table with RLS on and no policy denies all access by default; that is the point.                                                              |
-| `security_definer_view` (11 `public.*` views)                                                                    | 11    | **Reviewed, intentional for 10; verified live for the 11th.** See below.                                                                                                                                                       |
+| Finding                                                                                                          | Count | Disposition                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `function_search_path_mutable` (`private.prevent_mutation`, `private.normalize_company_name`, `private.slugify`) | 3     | **Fixed** — `set search_path=''` added in `202609100001_security_hardening.sql`, matching every other function in the codebase. None were `SECURITY DEFINER`, so this was not a privilege-escalation path, just inconsistency.   |
+| `extension_in_public` (`unaccent`)                                                                               | 1     | **Fixed** — moved to the `extensions` schema (where every other extension in this project already lives) in the same migration.                                                                                                  |
+| `rls_enabled_no_policy` (8 `market.*` tables)                                                                    | 8     | **Reviewed, intentional** — this is the total-lockout-by-design pattern above. A table with RLS on and no policy denies all access by default; that is the point.                                                                |
+| `security_definer_view` (11 `public.*` views)                                                                    | 11    | **Reviewed, intentional for 10; verified live for the 11th.** See below.                                                                                                                                                         |
+| `anon_security_definer_function_executable` (**staging only** — not reproducible on local)                       | 16    | **Fixed** — see "Anon-executable admin RPCs (staging-only finding)" below.                                                                                                                                                       |
+| `auth_leaked_password_protection` (staging project setting)                                                      | 1     | **Operator action, not a migration** — a Supabase Auth project setting (HaveIBeenPwned check on signup/password-change), not something a SQL migration configures. Enable in the dashboard when convenient; not a schema defect. |
+
+### Anon-executable admin RPCs (staging-only finding)
+
+The Security Advisor against **local** dev showed none of this; the same run against **live
+staging** showed 17 `data_admin`-gated RPCs executable by the `anon` role via PostgREST
+(`has_function_privilege('anon', '<fn>', 'execute')` confirmed `true` directly). Local Postgres
+already defaults new functions to non-public-executable; staging evidently did not carry that
+same default — root cause not fully traced (nothing in this repo's migration history explicitly
+re-grants `PUBLIC` execute), but the live grant state was unambiguous and is what actually
+matters. Two of the 17 are intentionally public and untouched: `get_market_data_health_summary()`
+(mirrors the unauthenticated `/api/health` pattern by design, `202609010001`) and
+`public.rls_auto_enable()` (a Supabase-platform-owned function, not defined in any migration in
+this repo).
+
+The remaining 15 were fixed in `202609100002_revoke_anon_admin_rpc_execute.sql` (explicit
+`revoke execute ... from public,anon` + `grant ... to authenticated` for each, plus
+`alter default privileges revoke execute on functions from public` for future migrations).
+Verifying that fix immediately re-ran the advisor and found a 16th —
+`get_market_data_operational_snapshot()` — still `anon`-executable on staging _despite_ already
+having an explicit `revoke ... from public` in its own defining migration (`202609010001`); fixed
+directly (re-asserting the grant, not chasing why the original revoke stopped holding) in
+`202609100003_revoke_anon_operational_snapshot.sql`. Every one of these 16 functions already
+independently checks `auth.uid()`/`private.has_role('data_admin')` in its own body — this was
+never a live authorization bypass, an anonymous caller always got `FORBIDDEN` or `null`, never a
+successful admin action — but it was needless pre-auth attack surface, now closed at the grant
+layer and covered by a live regression test (`supabase/tests/live-database.test.ts`: _"never
+grants anon EXECUTE on data_admin-gated RPCs"_). Verified on staging via
+`has_function_privilege` and a full advisor re-run after each fix; row counts for
+securities/issuers/fundamentals/documents/portfolios were checked unchanged before and after —
+these three migrations are grant-only, no table or data touched.
 
 ### The 11 `security_definer_view` findings
 
@@ -173,7 +206,8 @@ SECRET`, `sb_secret_`, and JWT-shaped strings — clean. No `NEXT_PUBLIC_*` vari
 - `apps/web/app/api/dcf/scenarios/route.test.ts` — oversized-payload (413) and rate-limited (429)
   cases.
 - `supabase/tests/live-database.test.ts` — `portfolio_replay_transactions` cross-user isolation,
-  role-escalation-via-signup-metadata, direct `user_roles` write rejection.
+  role-escalation-via-signup-metadata, direct `user_roles` write rejection, no anon EXECUTE on a
+  sample of `data_admin`-gated RPCs (the staging-only finding above).
 
 ## Remaining gaps (genuine, unresolved)
 
