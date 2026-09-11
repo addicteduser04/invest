@@ -1616,16 +1616,10 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
   // what identity or scope it asks for.
   it('never lets an anonymous or authenticated client invoke the rate limiter or create counter rows', async () => {
     await expect(
-      asUser(
-        null,
-        "select private.check_rate_limit('attacker-scope','attacker-hash',1,60)",
-      ),
+      asUser(null, "select private.check_rate_limit('attacker-scope','attacker-hash',1,60)"),
     ).rejects.toThrow(/permission denied/);
     await expect(
-      asUser(
-        ids.userA,
-        "select private.check_rate_limit('attacker-scope','attacker-hash',1,60)",
-      ),
+      asUser(ids.userA, "select private.check_rate_limit('attacker-scope','attacker-hash',1,60)"),
     ).rejects.toThrow(/permission denied/);
     await expect(
       asUser(
@@ -1656,15 +1650,19 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
     const scope = `live-test-${randomUUID()}`;
     const identity = 'trusted-caller';
 
-    const first = await adminClient.query<{ check_rate_limit: {
-      allowed: boolean; count: number; limit: number; retryAfterSeconds: number;
-    } }>('select private.check_rate_limit($1,$2,1,60) as check_rate_limit', [scope, identity]);
+    const first = await adminClient.query<{
+      check_rate_limit: {
+        allowed: boolean;
+        count: number;
+        limit: number;
+        retryAfterSeconds: number;
+      };
+    }>('select private.check_rate_limit($1,$2,1,60) as check_rate_limit', [scope, identity]);
     expect(first.rows[0]?.check_rate_limit).toMatchObject({ allowed: true, count: 1, limit: 1 });
 
-    const second = await adminClient.query<{ check_rate_limit: { allowed: boolean; count: number } }>(
-      'select private.check_rate_limit($1,$2,1,60) as check_rate_limit',
-      [scope, identity],
-    );
+    const second = await adminClient.query<{
+      check_rate_limit: { allowed: boolean; count: number };
+    }>('select private.check_rate_limit($1,$2,1,60) as check_rate_limit', [scope, identity]);
     expect(second.rows[0]?.check_rate_limit).toMatchObject({ allowed: false, count: 2 });
 
     // Seed a stale window (older than 2x the 60s window_seconds just used) and confirm the next

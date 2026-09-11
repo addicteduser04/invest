@@ -59,13 +59,26 @@ function getPool(): Pool | undefined {
   return pool;
 }
 
+// Logged at most once per process (not per request) so a sustained outage or a missing env var
+// in a given deployment is visible in server logs without spamming them under load -- the fail-
+// open path below intentionally returns quietly to the caller either way.
+let warnedMissingConfig = false;
+
 export async function checkRateLimit(options: RateLimitOptions): Promise<RateLimitResult> {
   const db = getPool();
   // Fails open: if the limiter itself is unreachable (pool not configured, connection error),
   // that is not a reason to reject otherwise legitimate traffic -- the limiter is defense-in-depth,
   // not the primary authorization check (requireDataAdmin's role check, RLS ownership, etc. still
   // apply independently).
-  if (!db) return { allowed: true, count: 0, limit: options.maxCount, retryAfterSeconds: 0 };
+  if (!db) {
+    if (!warnedMissingConfig) {
+      warnedMissingConfig = true;
+      console.error(
+        '[rate-limit] WORKER_DATABASE_URL is not configured -- rate limiting is disabled (failing open) for this deployment.',
+      );
+    }
+    return { allowed: true, count: 0, limit: options.maxCount, retryAfterSeconds: 0 };
+  }
   try {
     const { rows } = await db.query<{ check_rate_limit: RateLimitResult }>(
       'select private.check_rate_limit($1,$2,$3,$4) as check_rate_limit',
@@ -74,7 +87,12 @@ export async function checkRateLimit(options: RateLimitOptions): Promise<RateLim
     const result = rows[0]?.check_rate_limit;
     if (!result) return { allowed: true, count: 0, limit: options.maxCount, retryAfterSeconds: 0 };
     return result;
-  } catch {
+  } catch (error) {
+    console.error(
+      '[rate-limit] check_rate_limit call failed -- failing open for scope',
+      options.scope,
+      error,
+    );
     return { allowed: true, count: 0, limit: options.maxCount, retryAfterSeconds: 0 };
   }
 }
