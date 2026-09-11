@@ -20,12 +20,6 @@ vi.mock('@/lib/supabase/server', () => ({
     auth: {
       getUser: async () => ({ data: { user: state.user } }),
     },
-    rpc: async () => ({
-      data: state.rateLimitAllowed
-        ? { allowed: true, count: 1, limit: 20, retryAfterSeconds: 300 }
-        : { allowed: false, count: 21, limit: 20, retryAfterSeconds: 42 },
-      error: null,
-    }),
     from: (table: string) => {
       if (table !== 'dcf_scenarios') throw new Error(`unexpected table ${table}`);
       return {
@@ -74,6 +68,20 @@ vi.mock('@/lib/supabase/server', () => ({
     },
   }),
 }));
+
+// checkRateLimit now talks to a private, non-PostgREST-exposed DB function over a direct
+// connection (apps/web/lib/rate-limit.ts), not through the caller's own Supabase client -- mocked
+// at the module boundary instead of through the fake Supabase client's rpc().
+vi.mock('@/lib/rate-limit', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/rate-limit')>();
+  return {
+    ...actual,
+    checkRateLimit: async () =>
+      state.rateLimitAllowed
+        ? { allowed: true, count: 1, limit: 20, retryAfterSeconds: 300 }
+        : { allowed: false, count: 21, limit: 20, retryAfterSeconds: 42 },
+  };
+});
 
 import { GET, POST } from './route';
 

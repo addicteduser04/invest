@@ -21,6 +21,16 @@ vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => createFakeSupabase(state.config),
 }));
 
+// requireDataAdmin's rate limit now goes over a direct pg connection (apps/web/lib/rate-limit.ts),
+// not through the fake Supabase client -- stubbed so this route's own tests never make a real
+// network call and never touch the real WORKER_DATABASE_URL this test sets below for the (mocked)
+// PgIngestionStore constructor's own guard clause.
+vi.mock('pg', () => ({
+  Pool: vi.fn().mockImplementation(() => ({
+    query: async () => ({ rows: [{ check_rate_limit: { allowed: true, count: 1, limit: 1 } }] }),
+  })),
+}));
+
 vi.mock('@bvc/market-ingestion', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@bvc/market-ingestion')>();
   return {

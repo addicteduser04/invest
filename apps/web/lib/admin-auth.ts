@@ -35,7 +35,7 @@ export async function requireDataAdmin(rateLimit?: {
   if (!role) return jsonError('FORBIDDEN', 403);
 
   if (rateLimit) {
-    const result = await checkRateLimit(supabase, {
+    const result = await checkRateLimit({
       scope: rateLimit.scope,
       identity: user.id,
       maxCount: rateLimit.maxCount,

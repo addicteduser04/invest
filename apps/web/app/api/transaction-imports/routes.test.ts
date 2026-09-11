@@ -8,15 +8,22 @@ const state = vi.hoisted(() => ({
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({
     auth: { getUser: async () => ({ data: { user: state.user } }) },
-    // check_rate_limit is a second, distinct RPC the route now calls before
-    // confirm_transaction_import (see apps/web/lib/rate-limit.ts) -- always "allowed" here so
-    // these tests keep exercising confirm_transaction_import's own response, not the limiter.
-    rpc: async (name: string) =>
-      name === 'check_rate_limit'
-        ? { data: { allowed: true, count: 1, limit: 20, retryAfterSeconds: 0 }, error: null }
-        : { data: state.rpcData, error: state.rpcError },
+    rpc: async () => ({ data: state.rpcData, error: state.rpcError }),
   }),
 }));
+
+// checkRateLimit now talks to a private, non-PostgREST-exposed DB function over a direct
+// connection (apps/web/lib/rate-limit.ts), not through the caller's own Supabase client --
+// always "allowed" here so these tests keep exercising confirm_transaction_import's own
+// response, not the limiter.
+vi.mock('@/lib/rate-limit', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/rate-limit')>();
+  return {
+    ...actual,
+    checkRateLimit: async () => ({ allowed: true, count: 1, limit: 20, retryAfterSeconds: 0 }),
+  };
+});
+
 import { POST as confirm } from './[id]/confirm/route';
 
 const request = (locale: 'en' | 'fr' | 'ar') =>

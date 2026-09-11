@@ -106,13 +106,33 @@ asserts each only ever sees their own. Not changed, verified instead.
 
 ## Rate limiting
 
-Postgres-backed, not Redis/Upstash — a single atomic upsert (`public.check_rate_limit`,
-`202609100001_security_hardening.sql`) gives correct, race-free fixed-window counting at this
+Postgres-backed, not Redis/Upstash — a single atomic upsert (`private.check_rate_limit`,
+`202609100001_security_hardening.sql`, moved out of `public` and made server-only by
+`202609110001_rate_limit_server_only.sql`) gives correct, race-free fixed-window counting at this
 scale; a paid vendor for it would be exactly the over-engineering this milestone avoids. State
 lives in `private.rate_limit_counters` (`scope`, `identity_hash`, `window_start`,
 `request_count`), self-prunes on every call (no cron dependency), and never stores a raw IP —
 `hashIdentity()` (`apps/web/lib/rate-limit.ts`) sha256-hashes the caller's identity (a user id, or
 a hashed IP for the rare anonymous case) before it reaches the database.
+
+**Server-only by construction, not just by grant.** The limiter is an internal helper every
+protected route calls on its own behalf, never a primitive a browser should invoke directly.
+Originally it was `public.check_rate_limit`, reachable by any `authenticated` PostgREST caller
+with a self-chosen `p_identity_hash` — beyond the "grief another user's quota" risk that was
+already documented here, a direct caller could spray arbitrary `scope`/`identity_hash` pairs and
+manufacture rows in `private.rate_limit_counters` on demand, an unbounded client-driven write
+surface gated by nothing but a role grant. Fixed structurally in
+`202609110001_rate_limit_server_only.sql`: the function now lives in `private`, a schema
+`supabase/config.toml`'s `api.schemas` never exposes to PostgREST (only
+`public`/`storage`/`graphql_public` are), so `supabase.rpc('check_rate_limit', ...)` 404s for
+every client regardless of grants — an explicit `revoke ... from public,anon,authenticated` is
+kept anyway as defense-in-depth, matching this codebase's belt-and-suspenders convention.
+`apps/web/lib/rate-limit.ts` now calls it over a direct `WORKER_DATABASE_URL` connection (the same
+trusted, non-PostgREST path `apps/web/lib/job-lock.ts` already used for the advisory lock), and
+every caller still passes its own server-derived identity (`auth.uid()` from that route's own
+`supabase.auth.getUser()` call) — never a client-supplied value — closing the identity-spoofing
+risk this section used to document as accepted, not just moving it out of reach of an anonymous
+client.
 
 Tiers (`RATE_LIMIT_TIERS` in `apps/web/lib/rate-limit.ts`):
 
@@ -127,14 +147,11 @@ allowed rather than rejected — the limiter is defense-in-depth alongside `requ
 check and RLS ownership, never the sole authorization gate, so an unavailable limiter should not
 turn into an outage.
 
-**Known residual risk**: `public.check_rate_limit`'s `p_identity_hash` parameter is caller-supplied
-rather than derived server-side from `auth.uid()`, because the same function also serves anonymous
-callers (a hashed IP), who have no `auth.uid()`. An authenticated user who already knows another
-user's id (an opaque UUID, not otherwise exposed by this product) could in principle call this RPC
-directly with that id's hash to pre-exhaust the victim's quota for a known route/scope — a
-denial-of-service on rate-limited actions for one specific, already-identified victim, never a
-data-read/write bypass. Accepted for this milestone rather than splitting into a separate
-`auth.uid()`-only RPC (see Remaining gaps).
+**Formerly accepted residual risk, now closed**: earlier in this milestone, `p_identity_hash` was
+caller-supplied to a PostgREST-reachable function, so an authenticated user who knew another
+user's id could in principle grief that user's quota. Once the limiter became server-only (see
+above), that path no longer exists — no client, of any privilege level, can call the limiter with
+an arbitrary identity at all.
 
 ## Expensive-job concurrency
 
@@ -202,7 +219,8 @@ SECRET`, `sb_secret_`, and JWT-shaped strings — clean. No `NEXT_PUBLIC_*` vari
 ## Test coverage added this milestone
 
 - `apps/web/lib/admin-auth.test.ts`, `apps/web/lib/rate-limit.test.ts`,
-  `apps/web/lib/job-lock.test.ts` — unit tests for the new auth/rate-limit/lock helpers.
+  `apps/web/lib/job-lock.test.ts` — unit tests for the new auth/rate-limit/lock helpers, including
+  a test that the raw identity is never sent over the limiter's DB connection, only its hash.
 - `apps/web/app/api/dcf/scenarios/route.test.ts` — oversized-payload (413) and rate-limited (429)
   cases.
 - `supabase/tests/live-database.test.ts` — `portfolio_replay_transactions` cross-user isolation,
@@ -211,7 +229,6 @@ SECRET`, `sb_secret_`, and JWT-shaped strings — clean. No `NEXT_PUBLIC_*` vari
 
 ## Remaining gaps (genuine, unresolved)
 
-- **Rate-limit identity spoofing** (see above) — accepted low-severity residual risk, not fixed.
 - **`INTERNAL_JOB_SIGNING_SECRET` is unused** — no HTTP endpoint currently needs it; if a future
   milestone adds an HTTP-triggered internal job, it must implement signature verification then
   (constant-time comparison, e.g. `crypto.timingSafeEqual`), not assume this env var already

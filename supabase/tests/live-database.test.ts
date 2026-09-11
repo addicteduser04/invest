@@ -1605,4 +1605,82 @@ live.sequential('live PostgreSQL RLS and transaction matrix', () => {
       expect(row.anon_can, `${row.fn} must not be anon-executable`).toBe(false);
     }
   });
+
+  // The rate limiter (private.check_rate_limit) started life as public.check_rate_limit,
+  // reachable by any `authenticated` PostgREST caller with a self-chosen identity_hash -- beyond
+  // quota-griefing, a direct caller could spray arbitrary scope/identity_hash pairs and
+  // manufacture rows in private.rate_limit_counters on demand. 202609110001_rate_limit_server_only
+  // moved it to `private` (never exposed by PostgREST, see supabase/config.toml's api.schemas) and
+  // revoked execute from anon/authenticated directly as defense-in-depth. This regression-tests
+  // both: no PostgREST-equivalent role can invoke the limiter or write a counter row, no matter
+  // what identity or scope it asks for.
+  it('never lets an anonymous or authenticated client invoke the rate limiter or create counter rows', async () => {
+    await expect(
+      asUser(
+        null,
+        "select private.check_rate_limit('attacker-scope','attacker-hash',1,60)",
+      ),
+    ).rejects.toThrow(/permission denied/);
+    await expect(
+      asUser(
+        ids.userA,
+        "select private.check_rate_limit('attacker-scope','attacker-hash',1,60)",
+      ),
+    ).rejects.toThrow(/permission denied/);
+    await expect(
+      asUser(
+        ids.userA,
+        "insert into private.rate_limit_counters(scope,identity_hash,window_start,request_count) values('attacker-scope','attacker-hash',now(),1)",
+      ),
+    ).rejects.toThrow(/permission denied/);
+
+    const publicFn = await adminClient.query<{ exists: boolean }>(
+      `select exists(
+         select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+         where n.nspname='public' and p.proname='check_rate_limit'
+       ) as exists`,
+    );
+    expect(publicFn.rows[0]?.exists, 'public.check_rate_limit must not exist').toBe(false);
+
+    const leftoverCount = await adminClient.query<{ count: string }>(
+      "select count(*)::text as count from private.rate_limit_counters where scope='attacker-scope'",
+    );
+    expect(leftoverCount.rows[0]?.count).toBe('0');
+  });
+
+  // Confirms the trusted path (the one apps/web/lib/rate-limit.ts actually uses over a direct
+  // WORKER_DATABASE_URL connection) still works end-to-end after the move to `private`: a
+  // legitimate call increments the counter, reports allowed/blocked correctly, and the
+  // opportunistic cleanup still prunes windows older than 2x window_seconds.
+  it('lets a trusted server connection use the rate limiter, including window cleanup', async () => {
+    const scope = `live-test-${randomUUID()}`;
+    const identity = 'trusted-caller';
+
+    const first = await adminClient.query<{ check_rate_limit: {
+      allowed: boolean; count: number; limit: number; retryAfterSeconds: number;
+    } }>('select private.check_rate_limit($1,$2,1,60) as check_rate_limit', [scope, identity]);
+    expect(first.rows[0]?.check_rate_limit).toMatchObject({ allowed: true, count: 1, limit: 1 });
+
+    const second = await adminClient.query<{ check_rate_limit: { allowed: boolean; count: number } }>(
+      'select private.check_rate_limit($1,$2,1,60) as check_rate_limit',
+      [scope, identity],
+    );
+    expect(second.rows[0]?.check_rate_limit).toMatchObject({ allowed: false, count: 2 });
+
+    // Seed a stale window (older than 2x the 60s window_seconds just used) and confirm the next
+    // call for this same scope/identity opportunistically deletes it.
+    await adminClient.query(
+      `insert into private.rate_limit_counters(scope,identity_hash,window_start,request_count)
+       values($1,$2,now()-interval '10 minutes',9)`,
+      [scope, identity],
+    );
+    await adminClient.query('select private.check_rate_limit($1,$2,1,60)', [scope, identity]);
+    const stale = await adminClient.query<{ count: string }>(
+      "select count(*)::text as count from private.rate_limit_counters where scope=$1 and window_start<now()-interval '5 minutes'",
+      [scope],
+    );
+    expect(stale.rows[0]?.count).toBe('0');
+
+    await adminClient.query('delete from private.rate_limit_counters where scope=$1', [scope]);
+  });
 });

@@ -14,7 +14,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       { code: 'UNAUTHENTICATED', message: localizeError({ code: 'UNAUTHENTICATED' }, locale) },
       { status: 401 },
     );
-  const rateLimit = await checkRateLimit(supabase, {
+  const rateLimit = await checkRateLimit({
     scope: 'transaction-imports.confirm',
     identity: user.id,
     ...RATE_LIMIT_TIERS.restricted,

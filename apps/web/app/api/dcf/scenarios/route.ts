@@ -47,7 +47,7 @@ export async function POST(request: Request) {
   } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: 'UNAUTHENTICATED' }, { status: 401 });
 
-  const rateLimit = await checkRateLimit(supabase, {
+  const rateLimit = await checkRateLimit({
     scope: 'dcf.scenarios.save',
     identity: user.id,
     ...RATE_LIMIT_TIERS.restricted,

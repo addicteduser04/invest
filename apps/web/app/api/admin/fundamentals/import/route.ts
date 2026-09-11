@@ -39,7 +39,7 @@ export async function POST(request: Request) {
   if (String(form.get('confirm') ?? '') !== '1')
     return Response.json({ ...preview, status: 'preview' });
 
-  const rateLimit = await checkRateLimit(supabase, {
+  const rateLimit = await checkRateLimit({
     scope: 'admin.fundamentals.import',
     identity: userId,
     ...RATE_LIMIT_TIERS.veryRestricted,

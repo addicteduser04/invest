@@ -56,7 +56,7 @@ export async function createPortfolio(formData: FormData) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error('Unauthorized');
-  const rateLimit = await checkRateLimit(supabase, {
+  const rateLimit = await checkRateLimit({
     scope: 'portfolio.create',
     identity: user.id,
     ...RATE_LIMIT_TIERS.restricted,
@@ -100,7 +100,7 @@ async function recordTransactionCommand(formData: FormData) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error('Unauthorized');
-  const rateLimit = await checkRateLimit(supabase, {
+  const rateLimit = await checkRateLimit({
     scope: 'transaction.record',
     identity: user.id,
     ...RATE_LIMIT_TIERS.restricted,

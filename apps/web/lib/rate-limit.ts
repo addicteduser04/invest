@@ -1,14 +1,22 @@
 import { createHash } from 'node:crypto';
+import { Pool } from 'pg';
 
 /**
- * Server-side rate limiting backed by public.check_rate_limit (Postgres, fixed-window, atomic --
- * see supabase/migrations/202609100001_security_hardening.sql). Deliberately not Redis/Upstash:
- * a single atomic upsert already gives correct, race-free counting at this scale, and adding a
- * paid vendor for it would be the exact over-engineering this milestone avoids. Called through
- * the caller's own Supabase client (PostgREST), same as every other read/write in these routes --
- * no separate trusted connection needed. State lives only in private.rate_limit_counters and
- * self-prunes on every call; the identity this milestone's callers pass (a user id, or a hashed
- * IP for anonymous routes) is hashed here before it ever reaches the database.
+ * Server-side rate limiting backed by private.check_rate_limit (Postgres, fixed-window, atomic --
+ * see supabase/migrations/202609100001_security_hardening.sql and
+ * 202609110001_rate_limit_server_only.sql). Deliberately not Redis/Upstash: a single atomic
+ * upsert already gives correct, race-free counting at this scale, and adding a paid vendor for it
+ * would be exactly the over-engineering this milestone avoids.
+ *
+ * Called over a direct WORKER_DATABASE_URL connection -- the same trusted, non-PostgREST path
+ * apps/web/lib/job-lock.ts already uses -- never through a caller's own (anon/authenticated)
+ * Supabase client. The limiter is an internal helper every protected route calls on the server's
+ * own behalf, never a primitive a browser should be able to invoke directly; `private.
+ * check_rate_limit` lives in a schema PostgREST never exposes (supabase/config.toml's
+ * api.schemas), so no client, however privileged, can call it via supabase.rpc() at all. State
+ * lives only in private.rate_limit_counters and self-prunes on every call; the identity this
+ * milestone's callers pass (a user id, or a hashed IP for anonymous routes) is hashed here before
+ * it ever reaches the database.
  */
 
 export interface RateLimitOptions {
@@ -37,31 +45,38 @@ export function hashIdentity(raw: string): string {
   return createHash('sha256').update(raw).digest('hex');
 }
 
-// Deliberately not `Pick<SupabaseClient, 'rpc'>`: the real SDK type overloads rpc() to return a
-// PostgrestFilterBuilder (thenable but not a literal Promise), which is not assignable to a
-// `Promise<...>` return type. PromiseLike is the common structural shape both the real client and
-// every test double (which just return a plain awaited object) actually satisfy.
-interface MinimalSupabase {
-  rpc(name: string, args?: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }>;
+// Lazily created, process-wide singleton: a fresh connection per call (this runs on every
+// protected request, far more often than the rare admin jobs job-lock.ts guards) would add
+// per-request connect latency and risk exhausting the database's connection limit under load --
+// the opposite of what a rate limiter should do. `max: 3` matches the small pools other
+// direct-connection callers in this codebase use (e.g. packages/annual-reports/src/store.ts);
+// never explicitly closed, by design -- a serverless instance recycles the process, not this pool.
+let pool: Pool | undefined;
+function getPool(): Pool | undefined {
+  const databaseUrl = process.env['WORKER_DATABASE_URL'];
+  if (!databaseUrl) return undefined;
+  if (!pool) pool = new Pool({ connectionString: databaseUrl, max: 3 });
+  return pool;
 }
 
-export async function checkRateLimit(
-  supabase: MinimalSupabase,
-  options: RateLimitOptions,
-): Promise<RateLimitResult> {
-  const { data, error } = await supabase.rpc('check_rate_limit', {
-    p_scope: options.scope,
-    p_identity_hash: hashIdentity(options.identity),
-    p_max_count: options.maxCount,
-    p_window_seconds: options.windowSeconds,
-  });
-  // Fails open: if the limiter itself is unreachable, that is not a reason to reject otherwise
-  // legitimate traffic -- the limiter is a defense-in-depth control, not the primary authorization
-  // check (requireDataAdmin's role check, RLS ownership, etc. still apply independently).
-  if (error || !data) {
+export async function checkRateLimit(options: RateLimitOptions): Promise<RateLimitResult> {
+  const db = getPool();
+  // Fails open: if the limiter itself is unreachable (pool not configured, connection error),
+  // that is not a reason to reject otherwise legitimate traffic -- the limiter is defense-in-depth,
+  // not the primary authorization check (requireDataAdmin's role check, RLS ownership, etc. still
+  // apply independently).
+  if (!db) return { allowed: true, count: 0, limit: options.maxCount, retryAfterSeconds: 0 };
+  try {
+    const { rows } = await db.query<{ check_rate_limit: RateLimitResult }>(
+      'select private.check_rate_limit($1,$2,$3,$4) as check_rate_limit',
+      [options.scope, hashIdentity(options.identity), options.maxCount, options.windowSeconds],
+    );
+    const result = rows[0]?.check_rate_limit;
+    if (!result) return { allowed: true, count: 0, limit: options.maxCount, retryAfterSeconds: 0 };
+    return result;
+  } catch {
     return { allowed: true, count: 0, limit: options.maxCount, retryAfterSeconds: 0 };
   }
-  return data as RateLimitResult;
 }
 
 export function rateLimitResponse(result: RateLimitResult): Response {
