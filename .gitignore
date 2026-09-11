@@ -4,8 +4,7 @@ dist/
 coverage/
 .turbo/
 .pnpm-store/
-.env
-.env.*
+.env*
 !.env.example
 *.log
 *.tsbuildinfo
@@ -14,4 +13,17 @@ supabase/.temp/
 supabase/.branches/
 supabase/snippets/
 .vercel
-.env*
+
+# Secrets / credentials that should never be committed regardless of where they end up.
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+.pgpass
+*.sqlite
+*.sqlite3
+
+# Personal/local Claude Code state -- not shared team config, may carry local permission grants.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
