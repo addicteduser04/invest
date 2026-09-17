@@ -37,7 +37,8 @@ pnpm market:daily
 
 This is provider-neutral by design: nothing in the pipeline assumes a specific hosting vendor.
 The worker process just needs `WORKER_DATABASE_URL` and `MARKET_INGESTION_PROVIDER` set in its
-environment.
+environment (plus `APP_ENV` and `BVC_PUBLIC_TESTING_ENABLED` when the provider is
+`bvc_public_testing` outside local development — see "Production safety" below).
 
 ### Recommended schedule (Africa/Casablanca)
 
@@ -95,8 +96,26 @@ Set `MARKET_INGESTION_PROVIDER` to exactly one of:
 
 ## Production safety
 
-- If `NODE_ENV=production` and `MARKET_INGESTION_PROVIDER=bvc_public_testing`, the pipeline
-  refuses to start (`PRODUCTION_REFUSES_BVC_PUBLIC_TESTING`) — no exceptions, no override flag.
+- The pipeline classifies which environment it is running as from `APP_ENV` (`local`,
+  `staging`, `production`, or `test`) — never from `NODE_ENV` or Vercel's own deployment-type
+  metadata. Both of those read `production` for the `saifinvest-staging` Vercel project too (it
+  is deployed as a Production-type Vercel deployment, same as real production would be), so
+  neither can distinguish staging from real production on its own — `APP_ENV` is the explicit
+  signal that does.
+- If `APP_ENV=production` (or `APP_ENV` is missing/unrecognized on a deployed build, i.e.
+  `NODE_ENV=production` — see `resolveAppEnv` in
+  `packages/market-ingestion/src/provider-policy.ts`) and
+  `MARKET_INGESTION_PROVIDER=bvc_public_testing`, the pipeline refuses to start
+  (`PRODUCTION_REFUSES_BVC_PUBLIC_TESTING`) — no exceptions, no override flag, and
+  `BVC_PUBLIC_TESTING_ENABLED` is never consulted in this case.
+- `APP_ENV=staging` is the only other environment permitted to use `bvc_public_testing`, and
+  still independently requires `BVC_PUBLIC_TESTING_ENABLED=true` — neither flag implies the
+  other. The `saifinvest-staging` Vercel project should set all three:
+  `APP_ENV=staging`, `MARKET_INGESTION_PROVIDER=bvc_public_testing`,
+  `BVC_PUBLIC_TESTING_ENABLED=true`.
+- A missing or unrecognized `APP_ENV` outside a deployed build (plain local `pnpm dev`/CLI usage)
+  falls back to `local`, preserving the existing local development workflow, which has never
+  needed to set `APP_ENV` at all.
 - There is no fallback path in the code from a licensed provider to `bvc_public_testing`. A
   licensed-provider failure is a failed run, never a silent downgrade.
 - Provider credentials are never included in API responses, run records, or logs — only the

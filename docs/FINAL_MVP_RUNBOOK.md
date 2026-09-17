@@ -71,8 +71,9 @@ bootstrap/regression pass below), not interleaved with them.
 ## 4. Data bootstrap (local/private testing only)
 
 `BVC_PUBLIC_TESTING_ENABLED=true` and provider `bvc_public_testing` are for local/private
-testing only — production must never use them (enforced in code, not just convention; see
-§7). To seed enough local data to exercise the product:
+testing (and, with `APP_ENV=staging`, the staging deployment) only — production must never use
+them (enforced in code, not just convention; see §13). To seed enough local data to exercise the
+product:
 
 ```bash
 pnpm data:bootstrap -- --tickers IAM,ATW,BCP --years 1
@@ -235,9 +236,11 @@ Required configuration once a target is confirmed:
 
 **Server/worker:** `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL` / `WORKER_DATABASE_URL`,
 `INTERNAL_JOB_SIGNING_SECRET` (generate fresh — do not reuse a local development value),
-`MARKET_INGESTION_PROVIDER` (never `bvc_public_testing` unless the environment is confirmed
-private; production/public staging refuses it unconditionally regardless of this setting once
-`NODE_ENV=production`).
+`APP_ENV` (`staging` for the `saifinvest-staging` project; real production must set
+`APP_ENV=production` — see "Production market-data gate" below), `MARKET_INGESTION_PROVIDER`
+(`bvc_public_testing` is only ever permitted when `APP_ENV=staging` **and**
+`BVC_PUBLIC_TESTING_ENABLED=true`; a missing/invalid `APP_ENV` on any deployed build is treated
+as production and refuses it unconditionally).
 
 Once a target and hosting path are confirmed: apply all 19 migrations via the Supabase CLI
 against that project, deploy the web app, deploy/configure the worker (or an external scheduler
@@ -247,8 +250,14 @@ core EN/FR/AR smoke test against the deployed URL before inviting pilot users.
 
 ## 13. Production market-data gate
 
-`bvc_public_testing` must never be configured with `NODE_ENV=production` — the pipeline hard-fails
-(`PRODUCTION_REFUSES_BVC_PUBLIC_TESTING`) with no override. A public SaifInvest launch must not
+`bvc_public_testing` must never be configured with `APP_ENV=production` (or with `APP_ENV`
+missing/unrecognized on a deployed build — a missing `APP_ENV` there is inferred as production,
+never as staging or local; see `resolveAppEnv` in
+`packages/market-ingestion/src/provider-policy.ts`) — the pipeline hard-fails
+(`PRODUCTION_REFUSES_BVC_PUBLIC_TESTING`) with no override. `NODE_ENV` alone cannot gate this:
+Vercel sets `NODE_ENV=production` for the `saifinvest-staging` deployment too, since it is
+itself a Production-type Vercel deployment — `APP_ENV` is the explicit signal that distinguishes
+staging from real production. A public SaifInvest launch must not
 present the private BVC public-site connector as a licensed commercial feed. Before public
 redistribution of exchange data, obtain/confirm the required rights and wire a real
 `licensed_api`/`licensed_sftp` adapter (none exists yet — selecting either currently fails fast

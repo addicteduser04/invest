@@ -2,16 +2,26 @@
 
 ## Environments
 
-- **Local**: disposable, `supabase start`. Free to reset.
+- **Local**: disposable, `supabase start`. Free to reset. `APP_ENV` does not need to be set —
+  a missing value is treated as `local`.
 - **Staging**: `https://saifinvest-staging.vercel.app`, Supabase project "Portfolio"
   (`afygvbccaggdhqiyxoqp`). Persistent — **never** `supabase db reset` against it, never truncate,
   never recreate from scratch. Treat it exactly like production for data-safety purposes even
   though its current dataset is a near-empty smoke-test environment (as of this milestone: 0
   securities/issuers/portfolios, 1 auth user — schema-migrated but not yet seeded with real
-  market/issuer data).
+  market/issuer data). The Vercel project must set `APP_ENV=staging` — this is the only
+  environment (besides local development) permitted to use the `bvc_public_testing` market-data
+  provider, and only in combination with `BVC_PUBLIC_TESTING_ENABLED=true` (see
+  [MARKET_DATA_OPERATIONS.md](./MARKET_DATA_OPERATIONS.md) "Production safety"). `NODE_ENV`
+  cannot distinguish staging from production on its own: Vercel sets `NODE_ENV=production` for
+  this deployment too, since it is itself a Production-type Vercel deployment — that is exactly
+  why the explicit `APP_ENV` variable exists.
 - **Production**: does not exist yet. Nothing in this repo currently deploys to one; any future
   production target must go through the same non-destructive migration discipline as staging, plus
   whatever additional review a real financial-data production launch needs (out of scope here).
+  It must set `APP_ENV=production` — and even without that, a missing/invalid `APP_ENV` on any
+  deployed build is inferred as production, so this is a fail-safe default, not the only
+  protection.
 
 ## Migration procedure
 
