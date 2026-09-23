@@ -8,3 +8,10 @@
     "test": { "dependsOn": ["^build"], "outputs": ["coverage/**"] }
   }
 }
+{
+  "globalEnv": [
+    "APP_ENV",
+    "MARKET_INGESTION_PROVIDER",
+    "BVC_PUBLIC_TESTING_ENABLED"
+  ]
+}
