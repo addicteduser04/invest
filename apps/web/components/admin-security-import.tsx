@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import React, { useState, type FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import type { Locale } from '@bvc/contracts';
 
 export type AdminSecurityRow = {
@@ -29,6 +30,16 @@ type Preview = {
   error?: string;
 };
 
+type BvcImport = {
+  status?: string;
+  rowCount?: number;
+  result?: { updatedRows?: number };
+  errors?: string[];
+  warnings?: string[];
+  notice?: string;
+  error?: string;
+};
+
 const copy = {
   en: {
     title: 'Security master',
@@ -42,6 +53,12 @@ const copy = {
     applied: 'Security master updated. Reload to refresh the table.',
     rows: 'rows',
     synthetic: 'Synthetic',
+    bvcImport: 'Import from BVC',
+    bvcImporting: 'Importing from BVC…',
+    bvcImported: 'Imported from BVC',
+    bvcFetched: 'rows fetched',
+    bvcUpdated: 'rows updated',
+    bvcUnexpected: 'Unexpected response from the server',
   },
   fr: {
     title: 'Référentiel des titres',
@@ -55,6 +72,12 @@ const copy = {
     applied: 'Référentiel mis à jour. Rechargez la page pour actualiser le tableau.',
     rows: 'lignes',
     synthetic: 'Synthétique',
+    bvcImport: 'Importer depuis la BVC',
+    bvcImporting: 'Import depuis la BVC…',
+    bvcImported: 'Import depuis la BVC terminé',
+    bvcFetched: 'lignes récupérées',
+    bvcUpdated: 'lignes mises à jour',
+    bvcUnexpected: 'Réponse inattendue du serveur',
   },
   ar: {
     title: 'مرجع الأوراق المالية',
@@ -68,6 +91,12 @@ const copy = {
     applied: 'تم تحديث المرجع. أعد تحميل الصفحة لتحديث الجدول.',
     rows: 'صفوف',
     synthetic: 'اصطناعي',
+    bvcImport: 'استيراد من بورصة الدار البيضاء',
+    bvcImporting: 'جارٍ الاستيراد من بورصة الدار البيضاء…',
+    bvcImported: 'تم الاستيراد من بورصة الدار البيضاء',
+    bvcFetched: 'صفوف مستلمة',
+    bvcUpdated: 'صفوف محدّثة',
+    bvcUnexpected: 'استجابة غير متوقعة من الخادم',
   },
 } as const;
 
@@ -82,6 +111,31 @@ export function AdminSecurityImport({
   const [file, setFile] = useState<File>();
   const [preview, setPreview] = useState<Preview>();
   const [busy, setBusy] = useState(false);
+  const router = useRouter();
+  const [bvcBusy, setBvcBusy] = useState(false);
+  const [bvcImport, setBvcImport] = useState<BvcImport>();
+
+  const importFromBvc = async () => {
+    if (bvcBusy) return;
+    setBvcBusy(true);
+    setBvcImport(undefined);
+    try {
+      const response = await fetch('/api/admin/imports/bvc/security-master', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'apply' }),
+      });
+      const body = (await response.json().catch(() => ({}))) as BvcImport;
+      if (!response.ok && !body.error && !body.errors?.length)
+        body.error = `${t.bvcUnexpected} (HTTP ${response.status})`;
+      setBvcImport(body);
+      if (response.ok && body.status === 'applied') router.refresh();
+    } catch (error) {
+      setBvcImport({ error: error instanceof Error ? error.message : t.bvcUnexpected });
+    } finally {
+      setBvcBusy(false);
+    }
+  };
 
   const submit = async (confirm: boolean) => {
     if (!file || busy) return;
@@ -121,6 +175,43 @@ export function AdminSecurityImport({
             {t.validate}
           </button>
         </form>
+        <div className="form">
+          <button
+            className="button secondary"
+            type="button"
+            disabled={bvcBusy}
+            aria-busy={bvcBusy}
+            onClick={() => void importFromBvc()}
+          >
+            {bvcBusy ? t.bvcImporting : t.bvcImport}
+          </button>
+        </div>
+        {bvcImport?.status === 'applied' ? (
+          <p className="notice success-notice" role="status">
+            {t.bvcImported}: <span dir="ltr">{bvcImport.rowCount ?? 0}</span> {t.bvcFetched},{' '}
+            <span dir="ltr">{bvcImport.result?.updatedRows ?? 0}</span> {t.bvcUpdated}
+          </p>
+        ) : null}
+        {bvcImport?.errors?.length ? (
+          <ul className="error-list">
+            {bvcImport.errors.map((error) => (
+              <li key={error}>{error}</li>
+            ))}
+          </ul>
+        ) : null}
+        {bvcImport?.warnings?.length ? (
+          <ul className="warning-list">
+            {bvcImport.warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        ) : null}
+        {bvcImport?.notice ? <p className="microcopy">{bvcImport.notice}</p> : null}
+        {bvcImport?.error ? (
+          <p className="error-text" role="alert">
+            {bvcImport.error}
+          </p>
+        ) : null}
         {preview?.errors?.length ? (
           <ul className="error-list">
             {preview.errors.map((error) => (
