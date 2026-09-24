@@ -269,8 +269,10 @@ async function upsertSecurityMasterRows(
       await client.query(
         `insert into market.securities(
            name, ticker, sector, listing_status, listed_on, is_synthetic, isin, issuer_name,
-           instrument_type, market_segment, share_count, source_provider_id, source_identifier, source_fetched_at
-         ) values($1,$2,$3,$4,$5,false,$6,$7,$8,$9,$10,$11,$12,now())`,
+           instrument_type, market_segment, share_count, source_provider_id, source_identifier, source_fetched_at,
+           issuer_id
+         ) values($1,$2,$3,$4,$5,false,$6,$7,$8,$9,$10,$11,$12,now(),
+           private.resolve_listed_issuer($7,$3,$2))`,
         [
           row.name,
           row.ticker,
