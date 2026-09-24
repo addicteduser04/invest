@@ -1,5 +1,10 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalEnv":[
+    "APP_ENV",
+    "MARKET_INGEStION_PROVIDER",
+    "BVC_PUBLIC_TESTING_ENABLED"
+  ],
   "tasks": {
     "build": { "dependsOn": ["^build"], "outputs": [".next/**", "dist/**"] },
     "dev": { "cache": false, "persistent": true },
@@ -7,11 +12,4 @@
     "typecheck": { "dependsOn": ["^typecheck"] },
     "test": { "dependsOn": ["^build"], "outputs": ["coverage/**"] }
   }
-}
-{
-  "globalEnv": [
-    "APP_ENV",
-    "MARKET_INGESTION_PROVIDER",
-    "BVC_PUBLIC_TESTING_ENABLED"
-  ]
 }
