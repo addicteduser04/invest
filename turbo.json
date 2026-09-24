@@ -2,7 +2,7 @@
   "$schema": "https://turbo.build/schema.json",
   "globalEnv":[
     "APP_ENV",
-    "MARKET_INGEStION_PROVIDER",
+    "MARKET_INGESTION_PROVIDER",
     "BVC_PUBLIC_TESTING_ENABLED"
   ],
   "tasks": {
