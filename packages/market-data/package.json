@@ -17,6 +17,7 @@
   "dependencies": {
     "csv-parse": "^6.1.0",
     "decimal.js": "^10.6.0",
+    "undici": "^7.29.1",
     "zod": "^4.0.0"
   },
   "devDependencies": {

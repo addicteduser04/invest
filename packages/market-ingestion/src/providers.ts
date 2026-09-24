@@ -1,6 +1,6 @@
-import { request as httpsRequest } from 'node:https';
 import {
   BVC_PUBLIC_TESTING_PROVIDER_ID,
+  bvcFetch,
   fetchBvcHistoricalPreview,
   fetchBvcIndexHistoryPreview,
   fetchBvcIndexMasterPreview,
@@ -106,35 +106,7 @@ async function bvcPublicTestingFetch(
     );
   if (!headers.has('accept-language')) headers.set('accept-language', 'en-US,en;q=0.9,fr;q=0.8');
   if (!headers.has('x-requested-with')) headers.set('x-requested-with', 'XMLHttpRequest');
-  return new Promise((resolveResponse, rejectResponse) => {
-    const request = httpsRequest(
-      url,
-      {
-        method: init.method ?? 'GET',
-        headers: Object.fromEntries(headers.entries()),
-        rejectUnauthorized: false,
-      },
-      (response) => {
-        const chunks: Buffer[] = [];
-        response.on('data', (chunk: Buffer) => chunks.push(chunk));
-        response.on('end', () => {
-          resolveResponse(
-            new Response(Buffer.concat(chunks), {
-              status: response.statusCode ?? 0,
-              statusText: response.statusMessage ?? '',
-              headers: response.headers as HeadersInit,
-            }),
-          );
-        });
-      },
-    );
-    request.on('error', rejectResponse);
-    if (init.signal) {
-      if (init.signal.aborted) request.destroy(new Error('BVC_FETCH_ABORTED'));
-      init.signal.addEventListener('abort', () => request.destroy(new Error('BVC_FETCH_ABORTED')), {
-        once: true,
-      });
-    }
-    request.end();
-  });
+  // TLS goes through the shared BVC-scoped transport (verification enabled, plus the
+  // intermediate BVC omits -- see packages/market-data/src/bvc-ca.ts).
+  return bvcFetch(url, { ...init, headers });
 }

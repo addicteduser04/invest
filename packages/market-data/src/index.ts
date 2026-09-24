@@ -2,6 +2,9 @@ import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { parse } from 'csv-parse/sync';
 import { z } from 'zod';
+import { bvcFetch } from './bvc-transport';
+
+export { BVC_HOSTNAME, bvcFetch, getBvcDispatcher } from './bvc-transport';
 
 export {
   computeExpectedLatestMarketDate,
@@ -681,7 +684,7 @@ export function previewBvcHistoricalPayload(
 
 export async function fetchBvcHistoricalPreview(
   input: BvcHistoricalFetchInput,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = bvcFetch,
 ): Promise<BvcHistoricalPreview> {
   const instrument = input.instrument.trim().toUpperCase();
   if (!/^[A-Z0-9._-]{1,30}$/.test(instrument)) throw new Error('INVALID_BVC_INSTRUMENT');
@@ -730,7 +733,7 @@ export async function fetchBvcHistoricalPreview(
 
 export async function fetchBvcHistoricalRangePreview(
   input: BvcHistoricalFetchInput,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = bvcFetch,
 ): Promise<BvcHistoricalPreview> {
   const instrument = input.instrument.trim().toUpperCase();
   if (!/^[A-Z0-9._-]{1,30}$/.test(instrument)) throw new Error('INVALID_BVC_INSTRUMENT');
@@ -1175,7 +1178,7 @@ export function previewBvcIndexHistoryPayload(
 
 export async function fetchBvcIndexHistoryPreview(
   input: BvcIndexHistoryFetchInput,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = bvcFetch,
 ): Promise<BvcIndexHistoryPreview> {
   const code = assertBvcIndexCode(input.code);
   const period = input.period ?? '1m';
@@ -1220,7 +1223,7 @@ export async function fetchBvcIndexHistoryPreview(
 }
 
 export async function fetchBvcSecurityMasterPreview(
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = bvcFetch,
 ): Promise<BvcSecurityMasterPreview> {
   const response = await fetchImpl(BVC_SECURITY_MASTER_PAGE, {
     method: 'GET',
@@ -1233,7 +1236,7 @@ export async function fetchBvcSecurityMasterPreview(
 }
 
 export async function fetchBvcIndexMasterPreview(
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = bvcFetch,
 ): Promise<BvcIndexMasterPreview> {
   const response = await fetchImpl(BVC_INDICES_PAGE, {
     method: 'GET',
@@ -1311,7 +1314,7 @@ export function previewBvcLatestMarketHtml(
 }
 
 export async function fetchBvcLatestMarketPreview(
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = bvcFetch,
 ): Promise<BvcLatestMarketPreview> {
   const response = await fetchImpl(BVC_LIVE_INDICES_PAGE, {
     method: 'GET',
