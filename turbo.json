@@ -1,9 +1,13 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalEnv":[
+  "globalEnv": [
     "APP_ENV",
     "MARKET_INGESTION_PROVIDER",
-    "BVC_PUBLIC_TESTING_ENABLED"
+    "BVC_PUBLIC_TESTING_ENABLED",
+    "MARKET_INGESTION_DISPATCH_TOKEN",
+    "MARKET_INGESTION_DISPATCH_REPOSITORY",
+    "MARKET_INGESTION_DISPATCH_ENVIRONMENT",
+    "MARKET_INGESTION_DISPATCH_REF"
   ],
   "tasks": {
     "build": { "dependsOn": ["^build"], "outputs": [".next/**", "dist/**"] },

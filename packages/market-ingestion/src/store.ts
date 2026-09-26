@@ -5,14 +5,15 @@ import type {
   BvcIndexObservationCandidate,
   SecurityMasterCandidate,
 } from '@bvc/market-data';
-import type {
-  Counts,
-  InstrumentFailure,
-  NormalizedPriceRow,
-  ProviderId,
-  RunMetrics,
-  RunStatus,
-  TriggerSource,
+import {
+  emptyMetrics,
+  type Counts,
+  type InstrumentFailure,
+  type NormalizedPriceRow,
+  type ProviderId,
+  type RunMetrics,
+  type RunStatus,
+  type TriggerSource,
 } from './types';
 
 // Distinct from scripts/data-bootstrap.ts's BOOTSTRAP_ACTOR_ID so local bootstrap runs and
@@ -56,7 +57,12 @@ export interface FinalizeRunInput {
 export interface IngestionStore {
   ensureSystemActor(): Promise<string>;
   createRun(input: CreateRunInput): Promise<string>;
-  finalizeRun(runId: string, input: FinalizeRunInput): Promise<void>;
+  /** Moves a run out of 'running'. Returns false if it was no longer running (e.g. recovered). */
+  finalizeRun(runId: string, input: FinalizeRunInput): Promise<boolean>;
+  /** Marks every run stuck in 'running' longer than the threshold as failed; returns their ids. */
+  recoverStaleRuns(staleAfterMinutes: number): Promise<string[]>;
+  /** Best-effort failure of one still-running run (interrupt/timeout); false if not running. */
+  abandonRun(runId: string, errorCode: string, message: string): Promise<boolean>;
   getRun(runId: string): Promise<StoredRun | null>;
   findLatestIncompleteRun(marketDate?: string): Promise<StoredRun | null>;
   getActiveSecurityTickers(): Promise<string[]>;
@@ -78,6 +84,13 @@ export class PgIngestionStore implements IngestionStore {
 
   constructor(databaseUrl: string) {
     this.pool = new Pool({ connectionString: databaseUrl, max: 4 });
+    // Without a listener, an idle pooled connection dropped by the server (restart, failover,
+    // network blip) is an unhandled 'error' event that kills the whole process mid-run. The pool
+    // already discards that client and reconnects on next use; in-flight queries still reject
+    // to their callers, so the pipeline records or finalizes the failure normally.
+    this.pool.on('error', (error) => {
+      console.warn(`[market-ingestion] idle database connection lost: ${error.message}`);
+    });
   }
 
   async close() {
@@ -132,10 +145,12 @@ export class PgIngestionStore implements IngestionStore {
   }
 
   async finalizeRun(runId: string, input: FinalizeRunInput) {
-    await this.pool.query(
+    // Guarded on status so a terminal state is never overwritten (e.g. by a run that outlived its
+    // executor's deadline and was already recovered as failed).
+    const result = await this.pool.query(
       `update market.ingestion_runs
        set status=$2, finished_at=now(), metrics=$3::jsonb, instrument_failures=$4::jsonb
-       where id=$1`,
+       where id=$1 and status='running'`,
       [
         runId,
         input.status,
@@ -143,6 +158,67 @@ export class PgIngestionStore implements IngestionStore {
         JSON.stringify(input.instrumentFailures),
       ],
     );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async recoverStaleRuns(staleAfterMinutes: number) {
+    return this.failRunningRuns(
+      `status='running' and started_at < now() - make_interval(mins => $1::int)`,
+      staleAfterMinutes,
+      'STALE_RUN_RECOVERED',
+      `Run did not finalize within ${staleAfterMinutes} minutes; its executor was interrupted or terminated.`,
+    );
+  }
+
+  async abandonRun(runId: string, errorCode: string, message: string) {
+    const ids = await this.failRunningRuns(
+      `id=$1::uuid and status='running'`,
+      runId,
+      errorCode,
+      message,
+    );
+    return ids.length > 0;
+  }
+
+  /**
+   * Marks the matching 'running' runs failed in one statement, preserving everything already
+   * recorded (existing metrics win over zero defaults; instrument_failures is untouched), and
+   * writes one append-only audit event per run with its prior state.
+   */
+  private async failRunningRuns(
+    filter: string,
+    filterValue: unknown,
+    errorCode: string,
+    message: string,
+  ) {
+    const result = await this.pool.query<{ id: string }>(
+      `with target as (
+         select id, status, market_date, provider_id, started_at, finished_at, metrics
+         from market.ingestion_runs
+         where ${filter}
+         for update skip locked
+       ), updated as (
+         update market.ingestion_runs r
+         set status='failed', finished_at=now(),
+             metrics = $4::jsonb || r.metrics || jsonb_build_object(
+               'errorSummary', coalesce(r.metrics->'errorSummary', '{}'::jsonb)
+                 || jsonb_build_object($2::text, coalesce((r.metrics->'errorSummary'->>$2)::int, 0) + 1),
+               'failureReason', $3::text)
+         from target t
+         where r.id = t.id
+         returning r.id
+       ), audited as (
+         insert into audit.events(actor_id, actor_type, action, entity_type, entity_id, reason, before_state, after_state)
+         select null, 'system', 'market_ingestion_run.marked_failed', 'ingestion_run', t.id, $3::text,
+           jsonb_build_object('status', t.status, 'marketDate', t.market_date, 'providerId', t.provider_id,
+                              'startedAt', t.started_at, 'finishedAt', t.finished_at, 'metrics', t.metrics),
+           jsonb_build_object('status', 'failed', 'errorCode', $2::text)
+         from target t join updated u on u.id = t.id
+       )
+       select id from updated`,
+      [filterValue, errorCode, message, JSON.stringify(emptyMetrics())],
+    );
+    return result.rows.map((row) => row.id);
   }
 
   async getRun(runId: string) {

@@ -2,12 +2,16 @@ import { pathToFileURL } from 'node:url';
 import {
   buildRetryPlan,
   DEFAULT_CONCURRENCY,
+  MAX_RUN_DURATION_MINUTES,
   parseCliArgs,
   PgIngestionStore,
   resolveIngestionProvider,
   runDailyIngestion,
+  STALE_RUN_AFTER_MINUTES,
   todayInCasablanca,
+  type PipelineDeps,
   type RunSummary,
+  type StoredRun,
 } from '@bvc/market-ingestion';
 import { loadDotEnvLocal, type Env } from './env';
 
@@ -49,10 +53,79 @@ async function main() {
 
   const marketDate = cliOptions.date ?? todayInCasablanca();
   const store = new PgIngestionStore(databaseUrl);
+
+  if (cliOptions.recoverStale) {
+    try {
+      const recovered = await store.recoverStaleRuns(STALE_RUN_AFTER_MINUTES);
+      console.log(
+        recovered.length
+          ? `Recovered ${recovered.length} stale run(s) as failed: ${recovered.join(', ')}`
+          : 'No stale running runs found',
+      );
+    } finally {
+      await store.close();
+    }
+    return;
+  }
+
+  // try/finally cannot run if this process is killed outright; stale-run recovery covers that.
+  // These handlers cover the catchable cases (Ctrl-C, CI cancellation's SIGINT/SIGTERM, and our
+  // own hard deadline) by marking the in-flight run failed before exiting.
+  let activeRunId: string | null = null;
+  let exiting = false;
+  const abandonAndExit = async (errorCode: string, message: string, exitCode: number) => {
+    if (exiting) return;
+    exiting = true;
+    // Never let a hung database connection keep an interrupted process alive.
+    setTimeout(() => process.exit(exitCode), 10_000);
+    console.error(`${errorCode}: ${message}`);
+    if (activeRunId) {
+      try {
+        const marked = await store.abandonRun(activeRunId, errorCode, message);
+        if (marked) console.error(`Run ${activeRunId} marked failed`);
+      } catch (error) {
+        console.error(
+          `Could not mark run ${activeRunId} failed (${error instanceof Error ? error.message : error}); it will be recovered after ${STALE_RUN_AFTER_MINUTES} minutes`,
+        );
+      }
+    }
+    process.exit(exitCode);
+  };
+  // `on`, not `once`: wrappers (pnpm, tsx, the CI runner) often deliver the signal more than once,
+  // and an unhandled repeat would kill the process mid-write before the run is marked failed.
+  process.on('SIGINT', () => void abandonAndExit('INTERRUPTED', 'received SIGINT', 130));
+  process.on('SIGTERM', () => void abandonAndExit('INTERRUPTED', 'received SIGTERM', 143));
+  const watchdog = setTimeout(
+    () =>
+      void abandonAndExit(
+        'RUN_TIMEOUT',
+        `run exceeded the ${MAX_RUN_DURATION_MINUTES}-minute limit`,
+        1,
+      ),
+    MAX_RUN_DURATION_MINUTES * 60_000,
+  );
+  watchdog.unref();
+
+  const deps: PipelineDeps = {
+    log: (message) => console.log(message),
+    onRunCreated: (runId) => {
+      activeRunId = runId;
+      console.log(`Run created: ${runId}`);
+    },
+  };
+
   try {
     let summary: RunSummary;
-    if (cliOptions.retryFailed) {
-      const parentRun = await store.findLatestIncompleteRun(cliOptions.date);
+    if (cliOptions.retryFailed || cliOptions.retryRunId) {
+      let parentRun: StoredRun | null;
+      if (cliOptions.retryRunId) {
+        parentRun = await store.getRun(cliOptions.retryRunId);
+        if (!parentRun) throw new Error(`Run ${cliOptions.retryRunId} not found`);
+        if (parentRun.status !== 'partial' && parentRun.status !== 'failed')
+          throw new Error(`Run ${parentRun.id} is ${parentRun.status}, not partial/failed`);
+      } else {
+        parentRun = await store.findLatestIncompleteRun(cliOptions.date);
+      }
       if (!parentRun) {
         throw new Error(
           cliOptions.date
@@ -76,6 +149,7 @@ async function main() {
           parentRunId: parentRun.id,
         },
         store,
+        deps,
       );
     } else {
       summary = await runDailyIngestion(
@@ -85,14 +159,24 @@ async function main() {
           ...(cliOptions.tickers ? { tickers: cliOptions.tickers } : {}),
           dryRun: cliOptions.dryRun,
           concurrency: cliOptions.concurrency ?? DEFAULT_CONCURRENCY,
-          triggerSource: 'cli',
+          triggerSource: cliOptions.triggerSource,
         },
         store,
+        deps,
       );
     }
     printSummary(summary);
     if (summary.status === 'failed') process.exitCode = 1;
+  } catch (error) {
+    // one_running_ingestion_run_per_date_provider_uq: another run for this date/provider is active.
+    if ((error as { code?: string } | null)?.code === '23505') {
+      throw new Error(
+        `ALREADY_RUNNING: another ingestion run for this market date and provider (${providerId}) is in progress`,
+      );
+    }
+    throw error;
   } finally {
+    clearTimeout(watchdog);
     await store.close();
   }
 }

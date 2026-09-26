@@ -12,7 +12,7 @@
     "typecheck": "turbo typecheck",
     "test": "turbo test && vitest run scripts/data-bootstrap.test.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "test:database": "LIVE_DATABASE_TESTS=1 TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres vitest run --config vitest.integration.config.ts supabase/tests/live-database.test.ts supabase/tests/portfolio-state-live.test.ts supabase/tests/company-documents-live.test.ts supabase/tests/security-master-issuers-live.test.ts",
+    "test:database": "LIVE_DATABASE_TESTS=1 TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres vitest run --config vitest.integration.config.ts supabase/tests/live-database.test.ts supabase/tests/portfolio-state-live.test.ts supabase/tests/company-documents-live.test.ts supabase/tests/security-master-issuers-live.test.ts supabase/tests/market-ingestion-lifecycle-live.test.ts",
     "data:bootstrap": "tsx scripts/data-bootstrap.ts",
     "market:daily": "pnpm --filter @bvc/worker market:daily --",
     "reports:sync": "pnpm --filter @bvc/worker reports:sync --",

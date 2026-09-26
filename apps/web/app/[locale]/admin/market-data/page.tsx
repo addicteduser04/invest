@@ -5,6 +5,7 @@ import { asLocale, direction, getUi } from '@/lib/i18n';
 import { PublicNav } from '@/components/public/public-nav';
 import { PublicFooter } from '@/components/public/public-footer';
 import { AdminMarketData } from '@/components/admin-market-data';
+import { readIngestionDispatchConfig } from '@/lib/ingestion-dispatch';
 
 export default async function MarketDataAdminPage({
   params,
@@ -59,6 +60,7 @@ export default async function MarketDataAdminPage({
           initialSnapshot={snapshot ?? null}
           initialRuns={runs ?? []}
           provider={provider}
+          executorConfigured={readIngestionDispatchConfig(process.env) !== null}
         />
       </div>
       <PublicFooter locale={locale} authenticated />

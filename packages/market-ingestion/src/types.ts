@@ -6,7 +6,23 @@ export type TriggerSource = 'schedule' | 'manual' | 'retry' | 'cli';
 
 export type RunStatus = 'running' | 'succeeded' | 'partial' | 'failed';
 
-export type FailureStage = 'security_master' | 'index_master' | 'index_history' | 'ohlcv';
+export type FailureStage =
+  | 'security_master'
+  | 'index_master'
+  | 'index_history'
+  | 'ohlcv'
+  // A run-level failure (e.g. the database became unavailable mid-run) rather than one instrument.
+  | 'pipeline';
+
+/**
+ * Hard upper bound on one ingestion execution. The CLI enforces it with a watchdog that marks the
+ * run failed and exits, and the GitHub Actions job timeout sits just above it, so no executor can
+ * legitimately still be working on a run older than STALE_RUN_AFTER_MINUTES.
+ */
+export const MAX_RUN_DURATION_MINUTES = 40;
+
+/** A 'running' run older than this cannot still be executing and is recovered as failed. */
+export const STALE_RUN_AFTER_MINUTES = 90;
 
 export interface InstrumentFailure {
   ticker: string;

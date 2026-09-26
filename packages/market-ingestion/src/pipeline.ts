@@ -8,7 +8,9 @@ import {
   type NormalizedPriceRow,
   type RunMetrics,
   type RunOptions,
+  type RunStatus,
   type RunSummary,
+  STALE_RUN_AFTER_MINUTES,
 } from './types';
 
 const MAX_ATTEMPTS = 3;
@@ -45,6 +47,13 @@ export async function runDailyIngestion(
   let runId: string | null = null;
   if (!options.dryRun) {
     const proposedBy = await store.ensureSystemActor();
+    // Frees the one-running-run-per-date/provider slot held by any run whose executor died
+    // without finalizing (crash, SIGKILL, host timeout) — try/finally can't cover those.
+    const recovered = await store.recoverStaleRuns(STALE_RUN_AFTER_MINUTES);
+    if (recovered.length)
+      log(`Recovered ${recovered.length} stale run(s) as failed: ${recovered.join(', ')}`);
+    // A duplicate concurrent run for the same date/provider fails here on the
+    // one_running_ingestion_run_per_date_provider_uq index, before any work starts.
     runId = await store.createRun({
       providerId: options.providerId,
       marketDate: options.marketDate,
@@ -59,47 +68,80 @@ export async function runDailyIngestion(
     `Starting daily ingestion: ${options.marketDate} (${options.providerId})${options.dryRun ? ' [dry run]' : ''}${isRetry ? ' [retry]' : ''}`,
   );
 
-  let tickers: string[];
-  if (isRetry) {
-    // A retry run only reprocesses the tickers the caller identified as previously failed —
-    // it never re-touches security master or already-successful instruments.
-    tickers = options.tickers ?? [];
-    metrics.securitiesExpected = tickers.length;
-  } else {
-    tickers = await refreshSecurityMasterAndResolveTickers(
-      adapter,
-      store,
-      options,
-      metrics,
+  let status: Exclude<RunStatus, 'running'>;
+  try {
+    let tickers: string[];
+    if (isRetry) {
+      // A retry run only reprocesses the tickers the caller identified as previously failed —
+      // it never re-touches security master or already-successful instruments.
+      tickers = options.tickers ?? [];
+      metrics.securitiesExpected = tickers.length;
+    } else {
+      tickers = await refreshSecurityMasterAndResolveTickers(
+        adapter,
+        store,
+        options,
+        metrics,
+        failures,
+        log,
+      );
+      metrics.securitiesExpected = options.tickers?.length ?? tickers.length;
+    }
+
+    if (isRetry) {
+      const validCodes = new Set<string>(BVC_SUPPORTED_INDEX_CODES);
+      const codes = (options.retryIndexCodes ?? []).filter((code): code is BvcSupportedIndexCode =>
+        validCodes.has(code),
+      );
+      await retryIndexHistoryOnly(adapter, store, options, codes, metrics, failures, log);
+    } else {
+      await refreshIndices(adapter, store, options, metrics, failures, log);
+    }
+
+    await mapConcurrent(tickers, options.concurrency, async (ticker) => {
+      await ingestTickerOhlcv(adapter, store, options, runId, ticker, metrics, failures, log);
+    });
+
+    status =
+      failures.length === 0
+        ? 'succeeded'
+        : metrics.securitiesSucceeded > 0 || metrics.indicesSucceeded > 0
+          ? 'partial'
+          : 'failed';
+  } catch (error) {
+    // Run-level failure (e.g. the database became unreachable): finalize the run as failed so it
+    // never stays 'running'. If even that write fails, stale-run recovery picks it up later.
+    recordGlobalFailure(
       failures,
-      log,
+      metrics,
+      'pipeline',
+      'PIPELINE',
+      options.marketDate,
+      error,
+      'PIPELINE_ERROR',
     );
-    metrics.securitiesExpected = options.tickers?.length ?? tickers.length;
+    log(`Daily ingestion aborted: ${errorMessage(error)}`);
+    if (runId) {
+      try {
+        await store.finalizeRun(runId, { status: 'failed', metrics, instrumentFailures: failures });
+      } catch (finalizeError) {
+        log(
+          `Could not finalize run ${runId} (${errorMessage(finalizeError)}); it will be recovered as failed after ${STALE_RUN_AFTER_MINUTES} minutes`,
+        );
+      }
+    }
+    throw error;
   }
-
-  if (isRetry) {
-    const validCodes = new Set<string>(BVC_SUPPORTED_INDEX_CODES);
-    const codes = (options.retryIndexCodes ?? []).filter((code): code is BvcSupportedIndexCode =>
-      validCodes.has(code),
-    );
-    await retryIndexHistoryOnly(adapter, store, options, codes, metrics, failures, log);
-  } else {
-    await refreshIndices(adapter, store, options, metrics, failures, log);
-  }
-
-  await mapConcurrent(tickers, options.concurrency, async (ticker) => {
-    await ingestTickerOhlcv(adapter, store, options, runId, ticker, metrics, failures, log);
-  });
 
   const finishedAt = new Date().toISOString();
-  const status =
-    failures.length === 0
-      ? 'succeeded'
-      : metrics.securitiesSucceeded > 0 || metrics.indicesSucceeded > 0
-        ? 'partial'
-        : 'failed';
-
-  if (runId) await store.finalizeRun(runId, { status, metrics, instrumentFailures: failures });
+  if (
+    runId &&
+    !(await store.finalizeRun(runId, { status, metrics, instrumentFailures: failures }))
+  ) {
+    log(
+      `Run ${runId} was no longer running at finalize time; its recorded terminal status was kept`,
+    );
+  }
   log(
     `Finished daily ingestion: ${status} (${metrics.securitiesSucceeded}/${metrics.securitiesExpected} securities, ${failures.length} failures)`,
   );
@@ -326,8 +368,9 @@ function recordGlobalFailure(
   label: string,
   dateOrRange: string,
   error: unknown,
+  fallbackCode?: string,
 ) {
-  recordFailure(failures, metrics, label, stage, dateOrRange, error, 1);
+  recordFailure(failures, metrics, label, stage, dateOrRange, error, 1, fallbackCode);
 }
 
 function recordFailure(
@@ -338,8 +381,9 @@ function recordFailure(
   dateOrRange: string,
   error: unknown,
   attempts: number,
+  fallbackCode?: string,
 ) {
-  const code = errorCode(error);
+  const code = errorCode(error, fallbackCode);
   metrics.errorSummary[code] = (metrics.errorSummary[code] ?? 0) + 1;
   failures.push({
     ticker,
@@ -391,16 +435,17 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function errorCode(error: unknown) {
+function errorCode(error: unknown, fallbackCode = 'PROVIDER_INVALID_RESPONSE') {
   const message = errorMessage(error);
   const match =
     /^([A-Z][A-Z0-9_]{2,60}):/.exec(message) ?? /^([A-Z][A-Z0-9_]{2,60})$/.exec(message);
-  return match?.[1] ?? 'PROVIDER_INVALID_RESPONSE';
+  return match?.[1] ?? fallbackCode;
 }
 
 function sanitizeMessage(message: string) {
-  // Never persist stack traces or full URLs (which may carry query params) in a run record.
+  // Never persist stack traces or full URLs (which may carry query params or database
+  // credentials) in a run record.
   return (message.split('\n')[0] ?? message)
-    .replace(/https?:\/\/\S+/g, '[redacted-url]')
+    .replace(/(?:https?|postgres(?:ql)?):\/\/\S+/g, '[redacted-url]')
     .slice(0, 500);
 }

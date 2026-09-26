@@ -20,7 +20,7 @@ export interface RunMetrics {
 
 export interface InstrumentFailure {
   ticker: string;
-  stage: 'security_master' | 'index_master' | 'index_history' | 'ohlcv';
+  stage: 'security_master' | 'index_master' | 'index_history' | 'ohlcv' | 'pipeline';
   dateOrRange: string;
   errorCode: string;
   message: string;

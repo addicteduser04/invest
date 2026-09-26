@@ -55,10 +55,63 @@ static configuration the app documents, not something it can observe a live sche
 
 `/[locale]/admin/market-data` → **Run market import** opens a confirmation panel (target date,
 all-active-securities or a selected ticker list, dry-run toggle, collapsed concurrency option)
-before anything happens. It calls the same `runDailyIngestion` pipeline as the CLI — there is no
-separate browser-side ingestion path. The provider is always resolved server-side; the UI never
+before anything happens. Confirming **dispatches** the `Market ingestion` GitHub Actions
+workflow (see "Executor and run lifecycle" below), which runs `pnpm market:daily` to completion;
+the page then picks up the new run and tracks it live. The web app itself never executes
+ingestion. The provider is always resolved on the runner from its own environment; the UI never
 lets an operator choose it, so it cannot select `bvc_public_testing` in production even by
 mistake.
+
+When the deployment has no runner configured (`MARKET_INGESTION_DISPATCH_*` unset), the button
+and the retry action are hidden and the API routes answer `503 EXECUTOR_NOT_CONFIGURED` — they
+never create a run that nothing will execute.
+
+## Executor and run lifecycle
+
+**Executor.** `.github/workflows/market-ingestion.yml` (`workflow_dispatch`) is the only place
+ingestion runs outside a developer's terminal. Its inputs mirror the CLI (`date`, `tickers`,
+`dry_run`, `concurrency`, `retry_run_id`, `recover_stale_only`). It runs only in the GitHub
+**environment** `staging`: the job pins `environment: staging`, the `environment` input is a
+`choice` whose sole option is `staging`, and a guard step fails the job unless `APP_ENV` is
+`staging`. No other environment's credentials can be selected. The environment must define:
+
+| Kind     | Name                         | Staging value                            |
+| -------- | ---------------------------- | ---------------------------------------- |
+| secret   | `WORKER_DATABASE_URL`        | the staging project's session pooler URL |
+| variable | `APP_ENV`                    | `staging`                                |
+| variable | `MARKET_INGESTION_PROVIDER`  | `bvc_public_testing`                     |
+| variable | `BVC_PUBLIC_TESTING_ENABLED` | `true`                                   |
+
+The web deployment dispatches it with `MARKET_INGESTION_DISPATCH_TOKEN` (fine-grained token,
+this repository only, "Actions: read and write"), `MARKET_INGESTION_DISPATCH_REPOSITORY`,
+`MARKET_INGESTION_DISPATCH_ENVIRONMENT` (must be `staging`) and optionally `MARKET_INGESTION_DISPATCH_REF`
+(default `main`). The workflow must exist on that ref before it can be dispatched.
+
+**Terminal states.** Every run that reaches the pipeline is finalized as `succeeded`, `partial`
+or `failed`:
+
+- Provider/instrument errors are recorded per instrument and decide `partial` vs `failed`.
+- A run-level error (e.g. the database becomes unreachable mid-run) finalizes the run as
+  `failed` with a `PIPELINE` entry (`stage: pipeline`, code `PIPELINE_ERROR` unless the error
+  carries its own code), then the CLI exits non-zero.
+- `SIGINT`/`SIGTERM` (Ctrl-C, a cancelled workflow) mark the in-flight run `failed` with
+  `INTERRUPTED` before exiting; the CLI's 40-minute watchdog marks it `failed` with
+  `RUN_TIMEOUT` and exits. The workflow's own timeout is 45 minutes.
+- Finalization only ever moves a run out of `running`; it never overwrites a terminal state.
+
+**Stale-run recovery.** None of the above can run if the process is killed outright (runner
+lost, `SIGKILL`, host crash). Because every executor is bounded to ~45 minutes, a run still
+`running` after **90 minutes** cannot be live. Every non-dry-run ingestion first marks such runs
+`failed` (`STALE_RUN_RECOVERED`, reason in `metrics.failureReason`, one
+`market_ingestion_run.marked_failed` audit event each, existing metrics and failures preserved),
+which also frees their date/provider slot. To recover without ingesting:
+`pnpm market:daily -- --recover-stale`, or dispatch the workflow with `recover_stale_only`.
+
+**Duplicates.** Two requests for the same date/provider cannot process concurrently: the
+workflow's concurrency group serializes runs, the admin route rejects a date
+that already has a `running` run (`409 ALREADY_RUNNING`), and the database's
+`one_running_ingestion_run_per_date_provider_uq` index rejects a second `running` row outright
+(the CLI reports `ALREADY_RUNNING` and exits non-zero without creating a run).
 
 ## CLI reference
 
@@ -69,6 +122,8 @@ pnpm market:daily -- --tickers IAM,ATW,BCP
 pnpm market:daily -- --dry-run
 pnpm market:daily -- --retry-failed
 pnpm market:daily -- --retry-failed --date 2026-09-01
+pnpm market:daily -- --retry-run 650b1586-07e1-45da-8bcb-98366bcaf3de
+pnpm market:daily -- --recover-stale
 pnpm market:daily -- --concurrency 3
 ```
 
@@ -79,6 +134,10 @@ pnpm market:daily -- --concurrency 3
   optionally further scoped by `--ticker(s)`), and reprocesses **only** the tickers/index codes
   that failed in it. It creates a new run row linked to the original via `parent_run_id`;
   already-published data from the original run is never re-touched.
+- `--retry-run <id>` does the same for one specific `partial`/`failed` run (what the admin
+  retry action dispatches).
+- `--recover-stale` only marks stale `running` runs failed (see above), then exits.
+- `--trigger-source schedule|manual|cli` records who initiated the run (default `cli`).
 - `--concurrency` is capped at 5 (default 2) to avoid hammering the provider.
 
 ## Provider configuration
@@ -147,7 +206,9 @@ human-readable message, and how many attempts were made. Raw stack traces are ne
 shown — only sanitized, capped error messages.
 
 From a `partial`/`failed` run, **Retry failed instruments** shows exactly how many instruments
-will be retried, then calls the same pipeline scoped to just those instruments.
+will be retried, then dispatches the runner (`--retry-run`) scoped to just those instruments.
+A run that failed only at the `pipeline` stage has nothing instrument-level to retry — rerun
+its date instead (writes are idempotent).
 
 ## Incident recovery / provider outage procedure
 
@@ -160,7 +221,7 @@ endpoint, or a licensed feed outage:
    `FAILED LAST RUN` markers (does not mean the underlying price data is wrong — it means the
    _last_ run couldn't refresh that ticker) versus `STALE`/`NO PRICE HISTORY`.
 3. Retry once the provider recovers: `pnpm market:daily -- --retry-failed` (or the admin UI
-   button). This only touches the tickers/indices that actually failed.
+   button, which dispatches the runner). This only touches the tickers/indices that actually failed.
 4. If the outage persists past the last scheduled retry window (19:30), the admin health header
    will show `PARTIAL`/`FAILED` with a non-zero failure count — treat this as the operational
    alert signal; there is no separate paging integration built into this milestone.

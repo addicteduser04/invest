@@ -1,0 +1,108 @@
+name: Market ingestion
+
+# The only executor for market-data ingestion: runs `pnpm market:daily` to completion. Dispatched
+# manually from the Actions tab, or by the admin UI's "Run market import" / "Retry failed
+# instruments" actions (apps/web/lib/ingestion-dispatch.ts). The web app never runs ingestion
+# inside an HTTP request.
+on:
+  workflow_dispatch:
+    inputs:
+      # Staging only. A `choice` (not `type: environment`) so no other GitHub environment, and
+      # therefore no production credential, can be selected at dispatch time.
+      environment:
+        description: GitHub environment holding WORKER_DATABASE_URL and the provider settings
+        type: choice
+        options: [staging]
+        default: staging
+        required: true
+      date:
+        description: Market date YYYY-MM-DD (empty = today in Africa/Casablanca)
+        type: string
+        default: ''
+      tickers:
+        description: Comma-separated tickers (empty = all active securities)
+        type: string
+        default: ''
+      dry_run:
+        description: Fetch and validate only, write nothing
+        type: boolean
+        default: false
+      concurrency:
+        description: Concurrent instrument fetches (1-5)
+        type: string
+        default: '2'
+      retry_run_id:
+        description: Retry the failed instruments of this partial/failed run id instead
+        type: string
+        default: ''
+      recover_stale_only:
+        description: Only mark stale running runs failed, then exit
+        type: boolean
+        default: false
+      trigger_source:
+        description: Recorded trigger source (manual, schedule, cli)
+        type: string
+        default: manual
+
+permissions:
+  contents: read
+
+# One ingestion at a time; a second dispatch queues behind the first instead of processing
+# concurrently. (The database's one-running-run-per-date/provider index still applies.)
+concurrency:
+  group: market-ingestion-staging
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    # Pinned rather than taken from the input, so the job can only ever read staging's secrets.
+    environment: staging
+    # Just above the CLI's own 40-minute watchdog (MAX_RUN_DURATION_MINUTES) and well below the
+    # 90-minute stale-run threshold, so a killed job's run is always recoverable, never live.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.18.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Refuse non-staging configuration
+        env:
+          APP_ENV: ${{ vars.APP_ENV }}
+        run: |
+          if [ "$APP_ENV" != "staging" ]; then
+            echo "::error::APP_ENV must be 'staging' in the staging GitHub environment (got '${APP_ENV}')"
+            exit 1
+          fi
+      - name: Run market ingestion
+        env:
+          WORKER_DATABASE_URL: ${{ secrets.WORKER_DATABASE_URL }}
+          APP_ENV: ${{ vars.APP_ENV }}
+          MARKET_INGESTION_PROVIDER: ${{ vars.MARKET_INGESTION_PROVIDER }}
+          BVC_PUBLIC_TESTING_ENABLED: ${{ vars.BVC_PUBLIC_TESTING_ENABLED }}
+          # Inputs are passed through the environment, never interpolated into the script; the
+          # CLI validates each value (date, tickers, uuid, bounds) before doing anything.
+          INPUT_DATE: ${{ inputs.date }}
+          INPUT_TICKERS: ${{ inputs.tickers }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_CONCURRENCY: ${{ inputs.concurrency }}
+          INPUT_RETRY_RUN_ID: ${{ inputs.retry_run_id }}
+          INPUT_RECOVER_STALE_ONLY: ${{ inputs.recover_stale_only }}
+          INPUT_TRIGGER_SOURCE: ${{ inputs.trigger_source }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$INPUT_RECOVER_STALE_ONLY" = "true" ]; then
+            args+=(--recover-stale)
+          elif [ -n "$INPUT_RETRY_RUN_ID" ]; then
+            args+=(--retry-run "$INPUT_RETRY_RUN_ID")
+          else
+            if [ -n "$INPUT_DATE" ]; then args+=(--date "$INPUT_DATE"); fi
+            if [ -n "$INPUT_TICKERS" ]; then args+=(--tickers "$INPUT_TICKERS"); fi
+            args+=(--trigger-source "$INPUT_TRIGGER_SOURCE")
+          fi
+          if [ "$INPUT_DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          args+=(--concurrency "$INPUT_CONCURRENCY")
+          pnpm market:daily -- "${args[@]}"

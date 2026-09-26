@@ -4,6 +4,7 @@ import { asLocale, direction, getUi } from '@/lib/i18n';
 import { PublicNav } from '@/components/public/public-nav';
 import { PublicFooter } from '@/components/public/public-footer';
 import { AdminMarketDataRunDetail } from '@/components/admin-market-data-run-detail';
+import { readIngestionDispatchConfig } from '@/lib/ingestion-dispatch';
 
 export default async function MarketDataRunDetailPage({
   params,
@@ -40,7 +41,12 @@ export default async function MarketDataRunDetailPage({
         <a href={`/${locale}/admin/market-data`}>{t.adminMarketDataLink}</a>
       </div>
       <div className="admin-v2-body">
-        <AdminMarketDataRunDetail locale={locale} runId={runId} initialRun={run} />
+        <AdminMarketDataRunDetail
+          locale={locale}
+          runId={runId}
+          initialRun={run}
+          executorConfigured={readIngestionDispatchConfig(process.env) !== null}
+        />
       </div>
       <PublicFooter locale={locale} authenticated />
     </main>

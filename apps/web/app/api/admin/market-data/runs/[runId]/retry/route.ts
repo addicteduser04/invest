@@ -1,12 +1,11 @@
 import {
-  DEFAULT_CONCURRENCY,
-  PgIngestionStore,
   buildRetryPlan,
+  parseRunId,
   resolveIngestionProvider,
-  runDailyIngestion,
-  type ProviderId,
+  type StoredRun,
 } from '@bvc/market-ingestion';
 import { isErrorResponse, requireDataAdmin } from '@/lib/admin-auth';
+import { dispatchIngestionWorkflow, readIngestionDispatchConfig } from '@/lib/ingestion-dispatch';
 import { RATE_LIMIT_TIERS } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
@@ -21,68 +20,64 @@ export async function POST(_request: Request, { params }: { params: Promise<{ ru
   });
   if (isErrorResponse(auth)) return auth;
 
-  const { runId } = await params;
-
-  let providerId: ProviderId;
+  let runId: string;
   try {
-    providerId = resolveIngestionProvider(process.env).providerId;
+    runId = parseRunId((await params).runId);
+  } catch {
+    return jsonError('Run not found', 404);
+  }
+
+  try {
+    resolveIngestionProvider(process.env);
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : 'PROVIDER_UNAVAILABLE', 503);
   }
 
-  const databaseUrl = process.env['WORKER_DATABASE_URL'];
-  if (!databaseUrl) return jsonError('WORKER_DATABASE_URL is not configured', 503);
+  const dispatch = readIngestionDispatchConfig(process.env);
+  if (!dispatch) return jsonError('EXECUTOR_NOT_CONFIGURED', 503);
 
-  const store = new PgIngestionStore(databaseUrl);
-  const parentRun = await store.getRun(runId);
-  if (!parentRun) {
-    await store.close();
-    return jsonError('Run not found', 404);
-  }
+  const { data, error } = await auth.supabase.rpc('get_market_ingestion_run', {
+    p_run_id: runId,
+  });
+  if (error) return jsonError(error.message, 422);
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null | undefined;
+  if (!row) return jsonError('Run not found', 404);
+  const parentRun = toStoredRun(row);
   if (parentRun.status !== 'partial' && parentRun.status !== 'failed') {
-    await store.close();
     return jsonError('Run is not retryable', 409);
   }
 
-  let plan;
+  // Validated here so the admin gets an immediate answer; the runner rebuilds the same plan.
   try {
-    plan = buildRetryPlan(parentRun);
-  } catch (error) {
-    await store.close();
-    return jsonError(error instanceof Error ? error.message : 'NO_FAILED_INSTRUMENTS', 409);
+    buildRetryPlan(parentRun);
+  } catch (planError) {
+    return jsonError(planError instanceof Error ? planError.message : 'NO_FAILED_INSTRUMENTS', 409);
   }
 
-  // Same deferred-response pattern as the manual-trigger route: respond as soon as the
-  // retry run row exists so the admin UI can poll it for live progress.
-  return new Promise<Response>((resolve) => {
-    let responded = false;
-    const respondOnce = (response: Response) => {
-      if (responded) return;
-      responded = true;
-      resolve(response);
-    };
+  try {
+    await dispatchIngestionWorkflow(dispatch, { retryRunId: parentRun.id });
+  } catch (dispatchError) {
+    console.error(
+      '[market-data] retry dispatch failed:',
+      dispatchError instanceof Error ? dispatchError.message : dispatchError,
+    );
+    return jsonError('DISPATCH_FAILED', 502);
+  }
 
-    runDailyIngestion(
-      {
-        providerId,
-        marketDate: parentRun.marketDate,
-        tickers: plan.tickers,
-        retryIndexCodes: plan.indexCodes,
-        dryRun: false,
-        concurrency: DEFAULT_CONCURRENCY,
-        triggerSource: 'retry',
-        parentRunId: parentRun.id,
-      },
-      store,
-      {
-        onRunCreated: (retryRunId) =>
-          respondOnce(Response.json({ runId: retryRunId, status: 'running' })),
-      },
-    )
-      .then((summary) => respondOnce(Response.json({ summary })))
-      .catch((error) =>
-        respondOnce(jsonError(error instanceof Error ? error.message : 'RETRY_FAILED', 502)),
-      )
-      .finally(() => void store.close());
-  });
+  return Response.json({ dispatched: true, parentRunId: parentRun.id }, { status: 202 });
+}
+
+function toStoredRun(row: Record<string, unknown>): StoredRun {
+  return {
+    id: String(row['id']),
+    providerId: row['provider_id'] as StoredRun['providerId'],
+    marketDate: String(row['market_date']),
+    status: row['status'] as StoredRun['status'],
+    triggerSource: row['trigger_source'] as StoredRun['triggerSource'],
+    startedAt: String(row['started_at']),
+    finishedAt: (row['finished_at'] as string | null) ?? null,
+    metrics: row['metrics'] as StoredRun['metrics'],
+    instrumentFailures: (row['instrument_failures'] as StoredRun['instrumentFailures']) ?? [],
+    parentRunId: (row['parent_run_id'] as string | null) ?? null,
+  };
 }

@@ -1,59 +1,65 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeSupabase, type FakeSupabaseConfig } from '@/test/fake-supabase';
 import type { StoredRun } from '@bvc/market-ingestion';
 
 const state = vi.hoisted(() => ({
   config: { user: null, role: null } as FakeSupabaseConfig,
   storedRun: null as StoredRun | null,
-  runDailyIngestion: vi.fn(async (_options: Record<string, unknown>) => ({
-    runId: 'run-2',
-    providerId: 'bvc_public_testing',
-    marketDate: '2026-08-28',
-    status: 'succeeded',
-    triggerSource: 'retry',
-    dryRun: false,
-    startedAt: '2026-08-28T18:00:00.000Z',
-    finishedAt: '2026-08-28T18:01:00.000Z',
-    metrics: {},
-    instrumentFailures: [],
-  })),
+  runDailyIngestion: vi.fn(),
+  fetch: vi.fn<typeof fetch>(async () => new Response(null, { status: 204 })),
 }));
 
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: async () => createFakeSupabase(state.config),
+  createClient: async () =>
+    createFakeSupabase({
+      ...state.config,
+      rpc: {
+        get_market_ingestion_run: () => ({
+          data: state.storedRun ? [toRow(state.storedRun)] : [],
+          error: null,
+        }),
+      },
+    }),
 }));
 
-// requireDataAdmin's rate limit now goes over a direct pg connection (apps/web/lib/rate-limit.ts),
-// not through the fake Supabase client -- stubbed so this route's own tests never make a real
-// network call and never touch the real WORKER_DATABASE_URL this test sets below for the (mocked)
-// PgIngestionStore constructor's own guard clause.
+// requireDataAdmin's rate limit goes over a direct pg connection (apps/web/lib/rate-limit.ts),
+// not through the fake Supabase client -- stubbed so these tests never make a real network call.
 vi.mock('pg', () => ({
   Pool: vi.fn().mockImplementation(() => ({
     query: async () => ({ rows: [{ check_rate_limit: { allowed: true, count: 1, limit: 1 } }] }),
   })),
 }));
 
+// The route must never execute ingestion in-process; this spy proves it.
 vi.mock('@bvc/market-ingestion', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@bvc/market-ingestion')>();
-  return {
-    ...actual,
-    PgIngestionStore: vi.fn().mockImplementation(() => ({
-      getRun: async () => state.storedRun,
-      close: vi.fn(),
-    })),
-    runDailyIngestion: (...args: unknown[]) =>
-      state.runDailyIngestion(...(args as [Record<string, unknown>])),
-  };
+  return { ...actual, runDailyIngestion: state.runDailyIngestion };
 });
 
 import { POST } from './route';
 
 const USER = { id: '00000000-0000-4000-8000-000000000010' };
-const params = Promise.resolve({ runId: 'run-1' });
+const RUN_ID = '650b1586-07e1-45da-8bcb-98366bcaf3de';
+const params = Promise.resolve({ runId: RUN_ID });
+
+function toRow(run: StoredRun) {
+  return {
+    id: run.id,
+    provider_id: run.providerId,
+    market_date: run.marketDate,
+    status: run.status,
+    trigger_source: run.triggerSource,
+    started_at: run.startedAt,
+    finished_at: run.finishedAt,
+    metrics: run.metrics,
+    instrument_failures: run.instrumentFailures,
+    parent_run_id: run.parentRunId,
+  };
+}
 
 function baseRun(overrides: Partial<StoredRun> = {}): StoredRun {
   return {
-    id: 'run-1',
+    id: RUN_ID,
     providerId: 'bvc_public_testing',
     marketDate: '2026-08-28',
     status: 'partial',
@@ -91,60 +97,94 @@ function baseRun(overrides: Partial<StoredRun> = {}): StoredRun {
 }
 
 describe('POST /api/admin/market-data/runs/[runId]/retry', () => {
+  const post = () => POST(new Request('http://localhost', { method: 'POST' }), { params });
+
   beforeEach(() => {
     state.config = { user: null, role: null };
     state.storedRun = null;
     state.runDailyIngestion.mockClear();
+    state.fetch.mockClear();
+    state.fetch.mockImplementation(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', state.fetch);
     process.env['MARKET_INGESTION_PROVIDER'] = 'bvc_public_testing';
     process.env['BVC_PUBLIC_TESTING_ENABLED'] = 'true';
     process.env['WORKER_DATABASE_URL'] = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres';
+    process.env['MARKET_INGESTION_DISPATCH_TOKEN'] = 'test-token';
+    process.env['MARKET_INGESTION_DISPATCH_REPOSITORY'] = 'owner/invest';
+    process.env['MARKET_INGESTION_DISPATCH_ENVIRONMENT'] = 'staging';
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('denies an unauthenticated caller', async () => {
-    const response = await POST(new Request('http://localhost', { method: 'POST' }), { params });
-    expect(response.status).toBe(401);
+    expect((await post()).status).toBe(401);
   });
 
   it('denies an investor', async () => {
     state.config = { user: USER, role: 'investor' };
-    const response = await POST(new Request('http://localhost', { method: 'POST' }), { params });
-    expect(response.status).toBe(403);
+    expect((await post()).status).toBe(403);
   });
 
-  it('retries a partial run for a data_admin, scoped to failed instruments only', async () => {
+  it('dispatches a retry of a partial run to the executor, never running it in-process', async () => {
     state.config = { user: USER, role: 'data_admin' };
     state.storedRun = baseRun();
-    const response = await POST(new Request('http://localhost', { method: 'POST' }), { params });
-    expect(response.status).toBe(200);
-    const [options] = state.runDailyIngestion.mock.calls[0]!;
-    expect(options).toMatchObject({
-      tickers: ['ATW'],
-      triggerSource: 'retry',
-      parentRunId: 'run-1',
+    const response = await post();
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ dispatched: true, parentRunId: RUN_ID });
+    expect(state.runDailyIngestion).not.toHaveBeenCalled();
+    const [, init] = state.fetch.mock.calls[0]!;
+    expect(JSON.parse(String(init!.body)).inputs).toMatchObject({
+      environment: 'staging',
+      retry_run_id: RUN_ID,
+      date: '',
+      tickers: '',
     });
+  });
+
+  it('dispatches a retry of a failed run', async () => {
+    state.config = { user: USER, role: 'data_admin' };
+    state.storedRun = baseRun({ status: 'failed' });
+    expect((await post()).status).toBe(202);
   });
 
   it('returns 404 when the run does not exist', async () => {
     state.config = { user: USER, role: 'data_admin' };
-    state.storedRun = null;
-    const response = await POST(new Request('http://localhost', { method: 'POST' }), { params });
+    expect((await post()).status).toBe(404);
+    expect(state.fetch).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 for a malformed run id without querying anything', async () => {
+    state.config = { user: USER, role: 'data_admin' };
+    const response = await POST(new Request('http://localhost', { method: 'POST' }), {
+      params: Promise.resolve({ runId: 'not-a-uuid' }),
+    });
     expect(response.status).toBe(404);
   });
 
   it('refuses to retry a run that is not partial/failed', async () => {
     state.config = { user: USER, role: 'data_admin' };
     state.storedRun = baseRun({ status: 'succeeded', instrumentFailures: [] });
-    const response = await POST(new Request('http://localhost', { method: 'POST' }), { params });
-    expect(response.status).toBe(409);
-    expect(state.runDailyIngestion).not.toHaveBeenCalled();
+    expect((await post()).status).toBe(409);
+    expect(state.fetch).not.toHaveBeenCalled();
   });
 
   it('refuses to retry a run with no retryable failures', async () => {
     state.config = { user: USER, role: 'data_admin' };
     state.storedRun = baseRun({ instrumentFailures: [] });
-    const response = await POST(new Request('http://localhost', { method: 'POST' }), { params });
+    const response = await post();
     expect(response.status).toBe(409);
-    const body = await response.json();
-    expect(body.error).toMatch(/NO_FAILED_INSTRUMENTS/);
+    expect((await response.json()).error).toMatch(/NO_FAILED_INSTRUMENTS/);
+    expect(state.fetch).not.toHaveBeenCalled();
+  });
+
+  it('refuses with EXECUTOR_NOT_CONFIGURED when no executor is configured', async () => {
+    state.config = { user: USER, role: 'data_admin' };
+    state.storedRun = baseRun();
+    delete process.env['MARKET_INGESTION_DISPATCH_REPOSITORY'];
+    const response = await post();
+    expect(response.status).toBe(503);
+    expect((await response.json()).error).toBe('EXECUTOR_NOT_CONFIGURED');
   });
 });

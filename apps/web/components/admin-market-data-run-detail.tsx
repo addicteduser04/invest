@@ -10,6 +10,8 @@ interface Props {
   locale: Locale;
   runId: string;
   initialRun: Record<string, unknown> | null;
+  /** Whether this deployment can dispatch work to the ingestion runner. */
+  executorConfigured: boolean;
 }
 
 const copy = {
@@ -46,8 +48,9 @@ const copy = {
       `This will retry ${count} previously failed instrument${count === 1 ? '' : 's'}. Successful instruments will not be touched.`,
     cancelButton: 'Cancel',
     confirmRetryButton: 'Retry now',
-    retryStarted: 'Retry started. A new run has been created.',
-    viewRetryRun: 'View retry run',
+    retryStarted:
+      'Retry queued on the import runner. The new run will appear under recent runs shortly.',
+    viewRetryRun: 'View recent runs',
     genericError: 'Something went wrong. Please try again.',
     triggerLabels: { schedule: 'schedule', manual: 'manual', retry: 'retry', cli: 'CLI' },
     statusLabels: {
@@ -61,6 +64,7 @@ const copy = {
       index_master: 'Index master',
       index_history: 'Index history',
       ohlcv: 'OHLCV',
+      pipeline: 'Whole run',
     },
     dash: '—',
   },
@@ -98,8 +102,9 @@ const copy = {
       `Ceci relancera ${count} instrument${count === 1 ? '' : 's'} précédemment en échec. Les instruments réussis ne seront pas modifiés.`,
     cancelButton: 'Annuler',
     confirmRetryButton: 'Relancer maintenant',
-    retryStarted: 'Relance démarrée. Une nouvelle exécution a été créée.',
-    viewRetryRun: 'Voir l’exécution de relance',
+    retryStarted:
+      'Relance mise en file sur l’exécuteur d’import. La nouvelle exécution apparaîtra bientôt dans les exécutions récentes.',
+    viewRetryRun: 'Voir les exécutions récentes',
     genericError: 'Une erreur est survenue. Veuillez réessayer.',
     triggerLabels: { schedule: 'planification', manual: 'manuel', retry: 'relance', cli: 'CLI' },
     statusLabels: { running: 'En cours', succeeded: 'Réussi', partial: 'Partiel', failed: 'Échec' },
@@ -108,6 +113,7 @@ const copy = {
       index_master: 'Référentiel indices',
       index_history: 'Historique indices',
       ohlcv: 'OHLCV',
+      pipeline: 'Exécution entière',
     },
     dash: '—',
   },
@@ -144,8 +150,9 @@ const copy = {
       `سيؤدي هذا إلى إعادة محاولة ${count} أداة فشلت سابقاً. لن يتم المساس بالأدوات الناجحة.`,
     cancelButton: 'إلغاء',
     confirmRetryButton: 'إعادة المحاولة الآن',
-    retryStarted: 'بدأت إعادة المحاولة. تم إنشاء تشغيل جديد.',
-    viewRetryRun: 'عرض تشغيل إعادة المحاولة',
+    retryStarted:
+      'تمت جدولة إعادة المحاولة على منفّذ الاستيراد. سيظهر التشغيل الجديد في العمليات الأخيرة قريباً.',
+    viewRetryRun: 'عرض العمليات الأخيرة',
     genericError: 'حدث خطأ ما. يرجى المحاولة مرة أخرى.',
     triggerLabels: { schedule: 'جدولة', manual: 'يدوي', retry: 'إعادة محاولة', cli: 'CLI' },
     statusLabels: { running: 'قيد التشغيل', succeeded: 'نجح', partial: 'جزئي', failed: 'فشل' },
@@ -154,6 +161,7 @@ const copy = {
       index_master: 'مرجع المؤشرات',
       index_history: 'سجل المؤشرات',
       ohlcv: 'OHLCV',
+      pipeline: 'التشغيل بالكامل',
     },
     dash: '—',
   },
@@ -170,7 +178,7 @@ function formatDateTime(iso: string | null, localeTag: string) {
   });
 }
 
-export function AdminMarketDataRunDetail({ locale, runId, initialRun }: Props) {
+export function AdminMarketDataRunDetail({ locale, runId, initialRun, executorConfigured }: Props) {
   const t = copy[locale];
   const localeTag = locale === 'ar' ? 'ar-MA' : locale === 'fr' ? 'fr-MA' : 'en-MA';
 
@@ -179,7 +187,6 @@ export function AdminMarketDataRunDetail({ locale, runId, initialRun }: Props) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [retryRunId, setRetryRunId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!run || run.status !== 'running') return;
@@ -206,8 +213,13 @@ export function AdminMarketDataRunDetail({ locale, runId, initialRun }: Props) {
     );
   }
 
+  // Only offered when a runner can actually execute it; a retry nobody runs would be abandoned.
   const retryEligible =
-    (run.status === 'partial' || run.status === 'failed') && run.instrumentFailures.length > 0;
+    executorConfigured &&
+    (run.status === 'partial' || run.status === 'failed') &&
+    run.instrumentFailures.some(
+      (failure) => failure.stage === 'ohlcv' || failure.stage === 'index_history',
+    );
 
   const confirmRetry = async () => {
     setBusy(true);
@@ -223,7 +235,6 @@ export function AdminMarketDataRunDetail({ locale, runId, initialRun }: Props) {
       }
       setRetryPanelOpen(false);
       setMessage(t.retryStarted);
-      if (body.runId) setRetryRunId(String(body.runId));
     } catch {
       setErrorMessage(t.genericError);
     } finally {
@@ -304,10 +315,7 @@ export function AdminMarketDataRunDetail({ locale, runId, initialRun }: Props) {
 
         {message ? (
           <p className="status-message" role="status">
-            {message}{' '}
-            {retryRunId ? (
-              <a href={`/${locale}/admin/market-data/runs/${retryRunId}`}>{t.viewRetryRun}</a>
-            ) : null}
+            {message} <a href={`/${locale}/admin/market-data`}>{t.viewRetryRun}</a>
           </p>
         ) : null}
         {errorMessage ? <p className="error-list">{errorMessage}</p> : null}

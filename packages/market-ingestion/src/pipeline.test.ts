@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BvcHistoricalCandidate, BvcIndexObservationCandidate } from '@bvc/market-data';
 import { runDailyIngestion } from './pipeline';
+import { STALE_RUN_AFTER_MINUTES } from './types';
 import { buildRetryPlan } from './retry';
 import type {
   Counts,
@@ -31,6 +32,9 @@ class FakeStore implements IngestionStore {
   runs = new Map<string, StoredRun>();
   prices = new Map<string, NormalizedPriceRow & { runId: string }>();
   priceWriteCalls = 0;
+  /** Failure injection: simulates the database becoming unreachable at a given call. */
+  failActiveTickers: Error | null = null;
+  failFinalize: Error | null = null;
   private runCounter = 0;
 
   constructor(public activeTickers: string[]) {}
@@ -40,6 +44,18 @@ class FakeStore implements IngestionStore {
   }
 
   async createRun(input: CreateRunInput) {
+    // Mirrors one_running_ingestion_run_per_date_provider_uq.
+    const clash = [...this.runs.values()].some(
+      (run) =>
+        run.status === 'running' &&
+        run.marketDate === input.marketDate &&
+        run.providerId === input.providerId,
+    );
+    if (clash) {
+      throw Object.assign(new Error('duplicate key value violates unique constraint'), {
+        code: '23505',
+      });
+    }
     this.runCounter += 1;
     const id = `run-${this.runCounter}`;
     this.runs.set(id, {
@@ -71,11 +87,39 @@ class FakeStore implements IngestionStore {
   }
 
   async finalizeRun(runId: string, input: FinalizeRunInput) {
+    if (this.failFinalize) throw this.failFinalize;
     const run = this.runs.get(runId)!;
+    if (run.status !== 'running') return false;
     run.status = input.status;
     run.finishedAt = new Date().toISOString();
     run.metrics = input.metrics;
     run.instrumentFailures = input.instrumentFailures;
+    return true;
+  }
+
+  async recoverStaleRuns(staleAfterMinutes: number) {
+    const cutoff = Date.now() - staleAfterMinutes * 60_000;
+    const recovered: string[] = [];
+    for (const run of this.runs.values()) {
+      if (run.status === 'running' && Date.parse(run.startedAt) < cutoff) {
+        this.markFailed(run, 'STALE_RUN_RECOVERED');
+        recovered.push(run.id);
+      }
+    }
+    return recovered;
+  }
+
+  async abandonRun(runId: string, errorCode: string) {
+    const run = this.runs.get(runId);
+    if (!run || run.status !== 'running') return false;
+    this.markFailed(run, errorCode);
+    return true;
+  }
+
+  private markFailed(run: StoredRun, errorCode: string) {
+    run.status = 'failed';
+    run.finishedAt = new Date().toISOString();
+    run.metrics.errorSummary[errorCode] = (run.metrics.errorSummary[errorCode] ?? 0) + 1;
   }
 
   async getRun(runId: string) {
@@ -91,6 +135,7 @@ class FakeStore implements IngestionStore {
   }
 
   async getActiveSecurityTickers() {
+    if (this.failActiveTickers) throw this.failActiveTickers;
     return this.activeTickers;
   }
 
@@ -418,6 +463,152 @@ describe('runDailyIngestion', () => {
   });
 });
 
+describe('run lifecycle', () => {
+  const ohlcvAdapter = () =>
+    makeAdapter({
+      fetchDailyOhlcv: async ({ ticker, date }) => ({
+        candidates: [candidate(ticker, date)],
+        errors: [],
+      }),
+    });
+
+  it('finalizes a successful run as succeeded with its published rows', async () => {
+    const store = new FakeStore(['IAM', 'ATW']);
+    const summary = await runDailyIngestion(baseOptions(), store, { adapter: ohlcvAdapter() });
+
+    const run = store.runs.get(summary.runId!)!;
+    expect(run.status).toBe('succeeded');
+    expect(run.finishedAt).not.toBeNull();
+    expect(run.metrics.securitiesSucceeded).toBe(2);
+    expect(store.prices.size).toBe(2);
+  });
+
+  it('finalizes as failed (never leaves it running) when the upstream BVC site is down', async () => {
+    const store = new FakeStore(['IAM', 'ATW']);
+    const down = async () => {
+      throw new Error('BVC_UNAVAILABLE: connect ETIMEDOUT');
+    };
+    const adapter = makeAdapter({
+      fetchSecurityMaster: down,
+      fetchIndexMaster: down,
+      fetchIndexHistory: down,
+      fetchDailyOhlcv: down,
+    });
+
+    const summary = await runDailyIngestion(baseOptions(), store, { adapter });
+
+    expect(summary.status).toBe('failed');
+    expect(store.runs.get(summary.runId!)!.status).toBe('failed');
+    expect(summary.metrics.errorSummary['BVC_UNAVAILABLE']).toBeGreaterThan(0);
+    expect(store.prices.size).toBe(0);
+  }, 20_000);
+
+  it('finalizes as failed with a PIPELINE failure when the database fails mid-run, then rethrows', async () => {
+    const store = new FakeStore(['IAM']);
+    store.failActiveTickers = new Error(
+      'connect ECONNREFUSED postgresql://user:secret@db.example:5432/postgres',
+    );
+
+    await expect(
+      runDailyIngestion(baseOptions(), store, { adapter: ohlcvAdapter() }),
+    ).rejects.toThrow('ECONNREFUSED');
+
+    const [run] = [...store.runs.values()];
+    expect(run!.status).toBe('failed');
+    expect(run!.finishedAt).not.toBeNull();
+    expect(run!.instrumentFailures).toEqual([
+      expect.objectContaining({
+        ticker: 'PIPELINE',
+        stage: 'pipeline',
+        errorCode: 'PIPELINE_ERROR',
+      }),
+    ]);
+    // Database connection strings never reach the persisted run record.
+    expect(run!.instrumentFailures[0]!.message).not.toContain('secret');
+  });
+
+  it('leaves the run for stale recovery when even finalization fails, and the next run recovers it', async () => {
+    const store = new FakeStore(['IAM']);
+    store.failFinalize = new Error('connection terminated unexpectedly');
+
+    await expect(
+      runDailyIngestion(baseOptions(), store, { adapter: ohlcvAdapter() }),
+    ).rejects.toThrow('connection terminated');
+    const [orphan] = [...store.runs.values()];
+    expect(orphan!.status).toBe('running');
+
+    // Simulate the orphan having outlived every executor's hard deadline.
+    orphan!.startedAt = new Date(Date.now() - (STALE_RUN_AFTER_MINUTES + 1) * 60_000).toISOString();
+    store.failFinalize = null;
+    const logs: string[] = [];
+    const next = await runDailyIngestion(baseOptions(), store, {
+      adapter: ohlcvAdapter(),
+      log: (message) => logs.push(message),
+    });
+
+    expect(orphan!.status).toBe('failed');
+    expect(orphan!.metrics.errorSummary['STALE_RUN_RECOVERED']).toBe(1);
+    expect(next.status).toBe('succeeded');
+    expect(
+      logs.some((line) => line.includes(`Recovered 1 stale run(s) as failed: ${orphan!.id}`)),
+    ).toBe(true);
+  });
+
+  it('never recovers a recent running run: a duplicate for the same date/provider is rejected instead', async () => {
+    const store = new FakeStore(['IAM']);
+    await store.createRun({
+      providerId: 'bvc_public_testing',
+      marketDate: '2026-08-28',
+      triggerSource: 'manual',
+      proposedBy: 'system-actor',
+    });
+
+    await expect(
+      runDailyIngestion(baseOptions(), store, { adapter: ohlcvAdapter() }),
+    ).rejects.toMatchObject({ code: '23505' });
+
+    expect([...store.runs.values()].map((run) => run.status)).toEqual(['running']);
+  });
+
+  it('rejects the second of two concurrent requests for the same date and provider', async () => {
+    const store = new FakeStore(['IAM']);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const adapter = makeAdapter({
+      fetchDailyOhlcv: async ({ ticker, date }) => {
+        await gate;
+        return { candidates: [candidate(ticker, date)], errors: [] };
+      },
+    });
+
+    const first = runDailyIngestion(baseOptions(), store, { adapter });
+    await vi.waitFor(() => expect(store.runs.size).toBe(1));
+    const second = runDailyIngestion(baseOptions(), store, { adapter });
+    await expect(second).rejects.toMatchObject({ code: '23505' });
+    release();
+
+    expect((await first).status).toBe('succeeded');
+    expect(store.runs.size).toBe(1);
+  });
+
+  it('does not overwrite a run that was already marked failed while it was executing', async () => {
+    const store = new FakeStore(['IAM']);
+    const logs: string[] = [];
+    const adapter = makeAdapter({
+      fetchDailyOhlcv: async ({ ticker, date }) => {
+        await store.abandonRun('run-1', 'RUN_TIMEOUT');
+        return { candidates: [candidate(ticker, date)], errors: [] };
+      },
+    });
+
+    await runDailyIngestion(baseOptions(), store, { adapter, log: (line) => logs.push(line) });
+
+    expect(store.runs.get('run-1')!.status).toBe('failed');
+    expect(store.runs.get('run-1')!.metrics.errorSummary['RUN_TIMEOUT']).toBe(1);
+    expect(logs.some((line) => line.includes('was no longer running at finalize time'))).toBe(true);
+  });
+});
+
 describe('retry-failed', () => {
   it('retries only the previously-failed tickers and leaves successful ones untouched', async () => {
     const store = new FakeStore(['IAM', 'ATW']);
@@ -467,6 +658,41 @@ describe('retry-failed', () => {
     expect(store.priceWriteCalls).toBe(iamWriteCallsAfterFirstRun + 1);
     expect(atwCallCount).toBeGreaterThan(atwCallsAfterFirstRun);
   });
+
+  it('retries a fully failed run once the provider recovers', async () => {
+    const store = new FakeStore(['IAM', 'ATW']);
+    const down = makeAdapter({
+      fetchIndexHistory: async () => {
+        throw new Error('BVC_HTTP_503');
+      },
+      fetchDailyOhlcv: async () => {
+        throw new Error('BVC_HTTP_503');
+      },
+    });
+    const failed = await runDailyIngestion(baseOptions({ tickers: ['IAM', 'ATW'] }), store, {
+      adapter: down,
+    });
+    expect(failed.status).toBe('failed');
+
+    const plan = buildRetryPlan((await store.getRun(failed.runId!))!);
+    const retry = await runDailyIngestion(
+      baseOptions({ tickers: plan.tickers, triggerSource: 'retry', parentRunId: failed.runId! }),
+      store,
+      {
+        adapter: makeAdapter({
+          fetchDailyOhlcv: async ({ ticker, date }) => ({
+            candidates: [candidate(ticker, date)],
+            errors: [],
+          }),
+        }),
+      },
+    );
+
+    expect(plan.tickers.sort()).toEqual(['ATW', 'IAM']);
+    expect(retry.status).toBe('succeeded');
+    expect(store.runs.get(retry.runId!)!.parentRunId).toBe(failed.runId);
+    expect(store.prices.size).toBe(2);
+  }, 20_000);
 
   it('throws when the selected run has no retryable failures', () => {
     const cleanRun: StoredRun = {

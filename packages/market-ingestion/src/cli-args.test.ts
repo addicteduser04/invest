@@ -7,6 +7,8 @@ describe('parseCliArgs', () => {
     expect(options).toEqual({
       dryRun: false,
       retryFailed: false,
+      recoverStale: false,
+      triggerSource: 'cli',
       concurrency: DEFAULT_CONCURRENCY,
     });
   });
@@ -27,8 +29,30 @@ describe('parseCliArgs', () => {
       tickers: ['IAM', 'ATW', 'BCP'],
       dryRun: true,
       retryFailed: true,
+      recoverStale: false,
+      triggerSource: 'cli',
       concurrency: 3,
     });
+  });
+
+  it('parses --retry-run, --recover-stale and --trigger-source', () => {
+    const options = parseCliArgs([
+      '--retry-run',
+      '650B1586-07E1-45DA-8BCB-98366BCAF3DE',
+      '--recover-stale',
+      '--trigger-source',
+      'manual',
+    ]);
+    expect(options).toMatchObject({
+      retryRunId: '650b1586-07e1-45da-8bcb-98366bcaf3de',
+      recoverStale: true,
+      triggerSource: 'manual',
+    });
+  });
+
+  it('rejects a malformed run id and an unknown trigger source', () => {
+    expect(() => parseCliArgs(['--retry-run', "x'; drop table"])).toThrow(/Invalid run id/);
+    expect(() => parseCliArgs(['--trigger-source', 'retry'])).toThrow(/--trigger-source/);
   });
 
   it('parses a single --ticker', () => {

@@ -13,6 +13,7 @@ export { buildRetryPlan, type RetryPlan } from './retry';
 export {
   parseCliArgs,
   parseIsoDate,
+  parseRunId,
   parseTickers,
   parseConcurrency,
   normalizeTicker,

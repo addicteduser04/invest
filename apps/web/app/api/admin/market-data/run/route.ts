@@ -3,12 +3,10 @@ import {
   normalizeTicker,
   parseConcurrency,
   parseIsoDate,
-  PgIngestionStore,
   resolveIngestionProvider,
-  runDailyIngestion,
-  type ProviderId,
 } from '@bvc/market-ingestion';
 import { isErrorResponse, requireDataAdmin } from '@/lib/admin-auth';
+import { dispatchIngestionWorkflow, readIngestionDispatchConfig } from '@/lib/ingestion-dispatch';
 import { RATE_LIMIT_TIERS } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
@@ -59,56 +57,46 @@ export async function POST(request: Request) {
 
   const dryRun = input.dryRun === true;
 
-  // Never trust a client-supplied provider: always re-resolve server-side, so the UI
-  // cannot select bvc_public_testing in production even if it tried to.
-  let providerId: ProviderId;
+  // Never trust a client-supplied provider: the runner re-resolves it from its own environment.
+  // This check only refuses to dispatch from a deployment whose provider policy is invalid (e.g.
+  // bvc_public_testing in production).
   try {
-    providerId = resolveIngestionProvider(process.env).providerId;
+    resolveIngestionProvider(process.env);
   } catch (error) {
     return jsonError(error instanceof Error ? error.message : 'PROVIDER_UNAVAILABLE', 503);
   }
 
-  const databaseUrl = process.env['WORKER_DATABASE_URL'];
-  if (!databaseUrl) return jsonError('WORKER_DATABASE_URL is not configured', 503);
+  // The run executes on the GitHub Actions runner, never inside this request (a serverless
+  // function is frozen once it responds, which is what used to strand runs as 'running').
+  const dispatch = readIngestionDispatchConfig(process.env);
+  if (!dispatch) return jsonError('EXECUTOR_NOT_CONFIGURED', 503);
 
-  const store = new PgIngestionStore(databaseUrl);
+  // Early, friendly rejection of an obvious duplicate. The authoritative guards remain the
+  // one-running-run-per-date/provider unique index and the workflow's concurrency group.
+  if (!dryRun) {
+    const { data: recentRuns } = await auth.supabase.rpc('list_market_ingestion_runs', {
+      p_limit: 20,
+    });
+    const alreadyRunning = ((recentRuns ?? []) as { status?: string; market_date?: string }[]).some(
+      (run) => run.status === 'running' && run.market_date === marketDate,
+    );
+    if (alreadyRunning) return jsonError('ALREADY_RUNNING', 409);
+  }
 
-  // Respond as soon as the durable run row exists (so the admin UI can start polling
-  // /runs/[runId] for live progress) rather than blocking the whole HTTP request on a
-  // potentially long-running ingestion. The pipeline keeps running in the background —
-  // this assumes a persistent Node process (same model as apps/worker), not a hard
-  // per-request serverless timeout. A dry run creates no row, so it resolves normally.
-  return new Promise<Response>((resolve) => {
-    let responded = false;
-    const respondOnce = (response: Response) => {
-      if (responded) return;
-      responded = true;
-      resolve(response);
-    };
+  try {
+    await dispatchIngestionWorkflow(dispatch, {
+      date: marketDate,
+      ...(tickers ? { tickers } : {}),
+      dryRun,
+      concurrency,
+    });
+  } catch (error) {
+    console.error(
+      '[market-data] ingestion dispatch failed:',
+      error instanceof Error ? error.message : error,
+    );
+    return jsonError('DISPATCH_FAILED', 502);
+  }
 
-    runDailyIngestion(
-      {
-        providerId,
-        marketDate,
-        ...(tickers ? { tickers } : {}),
-        dryRun,
-        concurrency,
-        triggerSource: 'manual',
-      },
-      store,
-      {
-        onRunCreated: (runId) => respondOnce(Response.json({ runId, status: 'running' })),
-      },
-    )
-      .then((summary) => respondOnce(Response.json({ summary })))
-      .catch((error) => {
-        // The unique index one_running_ingestion_run_per_date_provider_uq (already applied) is
-        // the real dedup guard; a collision means a run for this date/provider is already in
-        // progress, which is a client-facing conflict, not an upstream ingestion failure.
-        const code = (error as { code?: string } | null)?.code;
-        if (code === '23505') return respondOnce(jsonError('ALREADY_RUNNING', 409));
-        respondOnce(jsonError(error instanceof Error ? error.message : 'INGESTION_FAILED', 502));
-      })
-      .finally(() => void store.close());
-  });
+  return Response.json({ dispatched: true, marketDate, dryRun }, { status: 202 });
 }

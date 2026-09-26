@@ -17,6 +17,8 @@ import {
 const CONFIGURED_SCHEDULE_TIME = '18:05';
 const CONFIGURED_SCHEDULE_TZ = 'Africa/Casablanca';
 const POLL_INTERVAL_MS = 4000;
+/** How long to wait for a dispatched import to show up before telling the admin to check the runner. */
+const DISPATCH_PICKUP_TIMEOUT_MS = 5 * 60_000;
 type MessageTone = 'info' | 'success' | 'warning';
 
 interface Props {
@@ -24,6 +26,8 @@ interface Props {
   initialSnapshot: Record<string, unknown> | null;
   initialRuns: Record<string, unknown>[];
   provider: { id: string | null; error: string | null };
+  /** Whether this deployment can dispatch imports to the ingestion runner. */
+  executorConfigured: boolean;
 }
 
 const copy = {
@@ -71,11 +75,18 @@ const copy = {
     cancelButton: 'Cancel',
     confirmButton: 'Run import',
     runStartedMessage: 'Import started. Tracking live progress below.',
+    runDispatchedMessage:
+      'Import queued on the import runner. It will start within a minute or two and appear under recent runs.',
+    dryRunDispatchedMessage:
+      'Dry run queued on the import runner. Its results appear in the runner log; nothing is published.',
+    runNotPickedUpMessage:
+      'The import runner has not started this import yet. Check the market-ingestion workflow in GitHub Actions.',
+    executorUnavailable:
+      'Imports run on the GitHub Actions import runner, which is not configured for this deployment.',
     runSucceededMessage: 'Import completed successfully.',
     runPartialMessage: 'Import completed with some failures. Review the details below.',
     runFailedMessage: 'The import failed. Review the failures and retry if needed.',
     viewRunDetails: 'View run details',
-    dryRunPrefix: 'Dry run complete',
     genericError: 'Something went wrong. Please try again.',
     runningLabel: 'RUNNING',
     equitiesProcessed: 'equities processed',
@@ -165,11 +176,18 @@ const copy = {
     cancelButton: 'Annuler',
     confirmButton: 'Lancer l’import',
     runStartedMessage: 'Import démarré. Suivez la progression en direct ci-dessous.',
+    runDispatchedMessage:
+      'Import mis en file sur l’exécuteur d’import. Il démarrera d’ici une à deux minutes et apparaîtra dans les exécutions récentes.',
+    dryRunDispatchedMessage:
+      'Simulation mise en file sur l’exécuteur d’import. Ses résultats figurent dans le journal de l’exécuteur ; rien n’est publié.',
+    runNotPickedUpMessage:
+      'L’exécuteur d’import n’a pas encore démarré cet import. Vérifiez le workflow market-ingestion dans GitHub Actions.',
+    executorUnavailable:
+      'Les imports s’exécutent sur l’exécuteur GitHub Actions, qui n’est pas configuré pour ce déploiement.',
     runSucceededMessage: 'Import terminé avec succès.',
     runPartialMessage: 'Import terminé avec certains échecs. Consultez le détail ci-dessous.',
     runFailedMessage: 'L’import a échoué. Consultez les échecs et relancez si nécessaire.',
     viewRunDetails: 'Voir les détails de l’exécution',
-    dryRunPrefix: 'Simulation terminée',
     genericError: 'Une erreur est survenue. Veuillez réessayer.',
     runningLabel: 'EN COURS',
     equitiesProcessed: 'valeurs traitées',
@@ -255,11 +273,18 @@ const copy = {
     cancelButton: 'إلغاء',
     confirmButton: 'تشغيل الاستيراد',
     runStartedMessage: 'بدأ الاستيراد. تابع التقدم المباشر أدناه.',
+    runDispatchedMessage:
+      'تمت جدولة الاستيراد على منفّذ الاستيراد. سيبدأ خلال دقيقة أو دقيقتين وسيظهر في العمليات الأخيرة.',
+    dryRunDispatchedMessage:
+      'تمت جدولة التجربة على منفّذ الاستيراد. تظهر نتائجها في سجل المنفّذ، ولا يُنشر أي شيء.',
+    runNotPickedUpMessage:
+      'لم يبدأ منفّذ الاستيراد هذا الاستيراد بعد. تحقّق من سير عمل market-ingestion في GitHub Actions.',
+    executorUnavailable:
+      'تُنفَّذ عمليات الاستيراد على منفّذ GitHub Actions، وهو غير مُهيأ لهذا النشر.',
     runSucceededMessage: 'اكتمل الاستيراد بنجاح.',
     runPartialMessage: 'اكتمل الاستيراد مع بعض الإخفاقات. راجع التفاصيل أدناه.',
     runFailedMessage: 'فشل الاستيراد. راجع الإخفاقات وأعد المحاولة إذا لزم الأمر.',
     viewRunDetails: 'عرض تفاصيل التشغيل',
-    dryRunPrefix: 'اكتملت التجربة',
     genericError: 'حدث خطأ ما. يرجى المحاولة مرة أخرى.',
     runningLabel: 'قيد التشغيل',
     equitiesProcessed: 'سهماً تمت معالجتها',
@@ -325,7 +350,13 @@ function formatTime(iso: string, localeTag: string) {
   return new Date(iso).toLocaleTimeString(localeTag, { hour: '2-digit', minute: '2-digit' });
 }
 
-export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider }: Props) {
+export function AdminMarketData({
+  locale,
+  initialSnapshot,
+  initialRuns,
+  provider,
+  executorConfigured,
+}: Props) {
   const t = copy[locale];
   const router = useRouter();
   const localeTag = locale === 'ar' ? 'ar-MA' : locale === 'fr' ? 'fr-MA' : 'en-MA';
@@ -351,6 +382,8 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
   const [messageTone, setMessageTone] = useState<MessageTone>('info');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [terminalRunId, setTerminalRunId] = useState<string | null>(null);
+  // Set while waiting for a dispatched (non-dry-run) import to appear as a run row.
+  const [dispatchedAt, setDispatchedAt] = useState<number | null>(null);
 
   const [coverageSearch, setCoverageSearch] = useState('');
   const [coverageFilter, setCoverageFilter] = useState<'all' | CoverageStatus>('all');
@@ -407,6 +440,39 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
     };
   }, [activeRunId, refresh, t]);
 
+  // A dispatched import has no run id until the runner creates its row, so poll the run list
+  // (bounded) and switch to live tracking once it appears.
+  useEffect(() => {
+    if (dispatchedAt === null) return;
+    const interval = setInterval(() => {
+      if (Date.now() - dispatchedAt > DISPATCH_PICKUP_TIMEOUT_MS) {
+        setDispatchedAt(null);
+        setMessage(t.runNotPickedUpMessage);
+        setMessageTone('warning');
+        return;
+      }
+      void refresh();
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [dispatchedAt, refresh, t]);
+
+  useEffect(() => {
+    if (dispatchedAt === null) return;
+    // Two-minute tolerance for clock skew between this browser and the database.
+    const picked = runs.find(
+      (run) => run.startedAt && Date.parse(run.startedAt) >= dispatchedAt - 120_000,
+    );
+    if (!picked) return;
+    setDispatchedAt(null);
+    if (picked.status === 'running') {
+      setActiveRunId(picked.id);
+      setMessage(t.runStartedMessage);
+      setMessageTone('info');
+    } else {
+      setMessage(null);
+    }
+  }, [runs, dispatchedAt, t]);
+
   const health = snapshot ? computeHealthStatus(snapshot) : 'no_data';
   const lastRun = snapshot?.lastRun ?? null;
   // "Last successful ingestion" must reflect a run that actually published something
@@ -444,17 +510,14 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
         setErrorMessage(String(body.error ?? t.genericError));
         return;
       }
-      if (body.runId) {
-        setActiveRunId(String(body.runId));
+      if (body.dispatched) {
         setPanelOpen(false);
-        setMessage(t.runStartedMessage);
-      } else if (body.summary) {
-        const summary = body.summary as {
-          metrics: { securitiesSucceeded: number; securitiesExpected: number };
-        };
-        setMessage(
-          `${t.dryRunPrefix}: ${summary.metrics.securitiesSucceeded}/${summary.metrics.securitiesExpected}`,
-        );
+        if (dryRun) {
+          setMessage(t.dryRunDispatchedMessage);
+        } else {
+          setMessage(t.runDispatchedMessage);
+          setDispatchedAt(Date.now());
+        }
       }
     } catch {
       setErrorMessage(t.genericError);
@@ -500,12 +563,14 @@ export function AdminMarketData({ locale, initialSnapshot, initialRuns, provider
             <span className="microcopy error-text">
               {t.providerUnavailableTitle}: {provider.error}
             </span>
+          ) : !executorConfigured ? (
+            <span className="microcopy">{t.executorUnavailable}</span>
           ) : (
             <button
               type="button"
               className="button"
               onClick={() => setPanelOpen((value) => !value)}
-              disabled={Boolean(provider.error)}
+              disabled={Boolean(provider.error) || dispatchedAt !== null}
             >
               {t.runImportButton}
             </button>
